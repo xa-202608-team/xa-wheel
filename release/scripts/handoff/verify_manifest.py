@@ -11,7 +11,9 @@
     有 --artifact-root $ARTIFACT_ROOT:
       先校验 release/CODE_MANIFEST.sha256 (同上, 代码存在性),
       再校验 $ARTIFACT_ROOT/HANDOFF_MANIFEST.json 及其登记的线下工件
-      (逐条存在性 + size + sha256 重算, 线下工件存在性)
+      (逐条存在性 + size + sha256 重算, 线下工件存在性;
+       另做"磁盘->manifest"方向: 枚举 ARTIFACT_ROOT 下普通文件,
+       未在 HANDOFF_MANIFEST.json 登记的多余文件报 FAIL)
 
 任何不一致 -> 退出码 1。
 
@@ -171,6 +173,11 @@ def verify_artifact_root(artifact_root: Path) -> bool:
 
     HANDOFF_MANIFEST.json 采用契约 schemas/handoff-manifest.schema.json
     的 files[] 结构 (path/role/size/sha256/...), path 相对 ARTIFACT_ROOT。
+
+    双向核对:
+    - manifest -> 磁盘: 逐条存在性 + size + sha256 重算;
+    - 磁盘 -> manifest: 枚举 ARTIFACT_ROOT 下普通文件 (HANDOFF_MANIFEST.json
+      自身除外), 未登记的多余文件报 FAIL (EXTRA), 防止装配目录夹带未审计内容。
     """
     print("=" * 70)
     print("阶段二: HANDOFF_MANIFEST.json 线下工件独立验证")
@@ -200,10 +207,13 @@ def verify_artifact_root(artifact_root: Path) -> bool:
     missing: "list[str]" = []
     size_bad: "list[str]" = []
     hash_bad: "list[str]" = []
+    extra: "list[str]" = []
 
+    declared_paths: "set[str]" = set()
     root_resolved = artifact_root.resolve()
     for ent in entries:
         rel = str(ent.get("path", ""))
+        declared_paths.add(rel)
         declared_size = ent.get("size")
         declared_hash = str(ent.get("sha256", ""))
         p = (artifact_root / rel).resolve()
@@ -226,19 +236,35 @@ def verify_artifact_root(artifact_root: Path) -> bool:
             if real_h != declared_hash:
                 hash_bad.append(f"{rel}: {declared_hash[:16]} -> {real_h[:16]}")
 
+    # 磁盘 -> manifest 方向: ARTIFACT_ROOT 下未登记的普通文件一律 EXTRA
+    man_resolved = man.resolve()
+    for p in sorted(root_resolved.rglob("*")):
+        if not p.is_file():
+            continue
+        if p == man_resolved:
+            continue
+        try:
+            rel = p.relative_to(root_resolved).as_posix()
+        except ValueError:
+            continue
+        if rel not in declared_paths:
+            extra.append(rel)
+
     print(f"manifest entries : {len(entries)}")
     print(f"missing          : {len(missing)}")
     print(f"size mismatch    : {len(size_bad)}")
     print(f"hash mismatch    : {len(hash_bad)}")
+    print(f"extra undeclared : {len(extra)}")
 
-    for label, items in (("MISSING", missing), ("SIZE", size_bad), ("HASH", hash_bad)):
+    for label, items in (("MISSING", missing), ("SIZE", size_bad), ("HASH", hash_bad),
+                         ("EXTRA", extra)):
         for it in items[:15]:
             print(f"  {label}: {it}")
 
-    ok = not missing and not size_bad and not hash_bad
+    ok = not missing and not size_bad and not hash_bad and not extra
     if ok:
         print(f"HANDOFF_MANIFEST_VERIFY_PASS —— {len(entries)}/{len(entries)} match, "
-              f"size + sha256 核对一致")
+              f"size + sha256 + 双向集合核对一致")
     else:
         print("HANDOFF_MANIFEST_VERIFY_FAIL")
     print("=" * 70)

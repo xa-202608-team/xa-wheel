@@ -27,8 +27,10 @@ cp -r "$PKG/05_结果/reference/wheel/." results/reference/
 # 3) 容器场景: data 以只读卷挂载到 /app/release/data (见 Dockerfile 注释)
 ```
 
-`data/`、`checkpoints/`、`results/` 为 `.gitignore` 整目录忽略的本地槽位，
-任何文件（含说明占位）都不得提交；公开的槽位语义以本文件与 `artifact-map.yaml` 为准。
+`data/`、`checkpoints/`、`results/` 为 `.gitignore` 白名单式忽略的本地槽位：
+工件本体不入库，仅 7 个槽位描述文件（各槽位 `README.md` + `data_manifest.json` /
+`checkpoint_manifest.json` / `public_summary.json` / `expected_metrics.json`）入库
+（与相控阵组件同法）；公开的槽位语义以本文件与 `artifact-map.yaml` 为准。
 
 ## 两阶段完整性校验
 
@@ -46,6 +48,12 @@ python release/scripts/handoff/verify_manifest.py --artifact-root "$ARTIFACT_ROO
   `schemas/handoff-manifest.schema.json` 的 `files[]`：逐文件 `path/role/size/sha256`）。
 - 原交付 `RELEASE_MANIFEST.sha256`（470 条，含 data/checkpoints 等线下工件）**不进入 Git**，
   仅作线下装配 `HANDOFF_MANIFEST.json` 的参考输入，不是 Git 代码校验真值。
+
+> **旧清单失配警示**：入库的 `release/RELEASE_SHA256SUMS.txt` / `release/RELEASE_MANIFEST.json`
+> 是原交付的**历史快照**，覆盖线下工件，且对个别代码文件已过时
+> （如授权重写的 `release/scripts/handoff/verify_manifest.py` 不在其列、个别测试文件
+> 哈希与交付源字节不符），与当前仓库比对出现缺失/失配属预期现象。
+> Git 代码校验真值是 `release/CODE_MANIFEST.sha256`，以它为准。
 
 ## 冻结科学结论（不可覆盖）
 

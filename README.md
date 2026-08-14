@@ -41,7 +41,7 @@ xa-wheel/
 ├── handoff/
 │   ├── artifact-map.yaml      ← 线下工件槽位映射（data/checkpoints/results → 交付 payload）
 │   └── HANDOFF.md             ← 线下装配与两阶段校验手册
-├── data/  checkpoints/  results/   ← 本地工件槽位（.gitignore 整目录忽略，不入库）
+├── data/  checkpoints/  results/   ← 本地工件槽位（白名单式忽略，仅 7 个槽位描述文件入库）
 └── tests/test_repository_boundary.py  ← 层级与工件边界回归测试
 ```
 
@@ -100,6 +100,12 @@ python release/scripts/handoff/verify_manifest.py --artifact-root /path/to/offli
 
 原交付 `RELEASE_MANIFEST.sha256`（470 条，含 data/checkpoints 等线下工件）不进入 Git，
 仅作线下装配 HANDOFF_MANIFEST.json 的参考输入；Git 内代码真值以 `release/CODE_MANIFEST.sha256` 为准。
+
+> **旧清单失配警示**：入库的 `release/RELEASE_SHA256SUMS.txt` / `release/RELEASE_MANIFEST.json`
+> 是原交付的**历史快照**，其条目覆盖线下工件，且对个别代码文件已过时
+> （如授权重写的 `release/scripts/handoff/verify_manifest.py` 不在其列、个别测试文件
+> 哈希与交付源字节不符），与当前仓库比对出现缺失/失配属预期现象。
+> Git 代码校验真值**只有** `release/CODE_MANIFEST.sha256`，以它为准，勿用旧快照核对代码基线。
 
 ## 科学结论（冻结，不可覆盖）
 
