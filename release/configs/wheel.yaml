@@ -1,0 +1,367 @@
+# 反作用飞轮寿命预测 — 唯一差异点配置
+# 所有仿真参数 / 超参 / 种子集中于此, 保证可复现 (赛题工程可复现性 50 分地基)
+# 字段含义详见 docs/flywheel_dev_plan.md 对应阶段
+
+seed: 42
+
+# ---------- 源域 (XJTU-SY 主 / IMS,FEMTO 辅) ----------
+source:
+  name: XJTU-SY
+  sample_rate_hz: 25600          # XJTU-SY 25.6 kHz 采样率
+  window_sec: 60                 # 按分钟窗聚合
+  window_stride_sec: 60
+  aux_datasets: [IMS, FEMTO]     # 跨数据集验证 (辅)
+  rul_cap_ratio: 0.35            # R_max = 35% 寿命 (plan 要求 30%-40%)
+  features:
+    target_dim: 12               # 退化特征维数, 要求 10-15
+  # 按机台个体划分 train/val (杜绝同一退化轨迹泄漏)
+  split:
+    val_bearing_ids: [Bearing1_5, Bearing2_5, Bearing3_5]
+
+# ---------- 飞轮退化仿真 (plan §3 物理参数区间) ----------
+sim:
+  n_traj: 100                    # 可配 200
+  duration_years: 3.0
+  sample_period_s: 1800          # 30 min，可解析轨道热循环
+  leo_period_s: 5700             # LEO 姿态指令周期
+  physics:
+    J_range: [0.01, 0.05]        # kg·m^2 转动惯量
+    Kt_range: [0.02, 0.03]       # N·m/A 力矩常数
+    Tc_range: [0.5e-3, 2.0e-3]   # N·m 库仑摩擦 (mN·m 量级)
+    b0_range: [1.0e-6, 1.0e-5]   # 初始黏性摩擦系数 (plan §3 原始区间)
+    Delta_range: [3.0, 10.0]     # 黏性退化倍数
+    tau_years_range: [0.5, 2.0]  # 退化时间常数 (年)
+  disturbance:
+    noise_ratio: 0.01            # 逐点白噪声 σ / 满量程 (必须逐点采样, 见 wheel_sim 注释)
+    meas_bias_ratio: 0.002       # 每轨迹固定量测直流偏置 σ / 满量程 (传感器标定误差, 与逐点噪声分开建模)
+    lube_spike_prob: 0.01        # 小概率润滑突变
+    arrhenius_T_ref_K: 293.15    # Arrhenius 温度调制参考点
+    arrhenius_Ea_eV: 0.3         # 激活能 (温度加速退化)
+  failure:
+    # 电流额定上限 -> 失效判据 (校准: 初始健康 I_m≈0.2~1.1A < 1.5, 退化后超 1.5)
+    Im_rated_A: 1.5
+    persistence_samples: 4
+    # ---- HI 口径 (S2' 改动 1) ----
+    # "Tf": HI 挂总摩擦力矩 T_f = Kt_hat*mean_w(I_m) - mean_w(T_cmd), 只用 Kt_hat,
+    #       与失效判据同源 (实测 HI 首达 1.0 与 EOL 偏移恒为 0, 达标轨迹数 == 失效轨迹数)
+    # "b" : S1 旧口径, HI 挂黏性摩擦 b̂ 并按 b_fail 归一; 保留仅供回退对比
+    #       (S1.5 实测该口径与失效判据不同源: 偏移 p5=-15540/p95=+15076, 9/100 条不一致)
+    hi_source: Tf
+    # T_f,fail 里 K_t 的来源: hat = 与分子同用 Kt_hat (K̂_t 约掉, 与失效判据严格同源)
+    #                        nom = 用下方标称 Kt_nom (实测偏移最大达 49% EOL, 不推荐)
+    Tf_fail_Kt_source: hat
+    # HI_B 归一用的全局固定失效阈值 b_fail = (Kt_nom*Im_rated - Tc_nom) / omega_ref
+    # 标称值 (非逐轨迹真值): 取 Kt_range / Tc_range / omega0 采样区间的中点, 保证
+    # HI 归一尺度对所有轨迹一致且在轨可查 (查器件手册即得, 无需知道该轮真实参数)
+    # 仅 hi_source="b" 时生效
+    Kt_nom: 0.025                # N·m/A, = mean(Kt_range)
+    Tc_nom: 1.25e-3              # N·m,   = mean(Tc_range)
+    omega_ref: 1500.0            # rad/s, = mean(omega0 采样区间 [1000,2000])
+
+  # ---------- HI / 目标域特征构造 (build_hi.py) ----------
+  hi:
+    lsq_window: 64               # b̂ 滑窗最小二乘窗长 (样本数)
+    sigma_window: 64             # x_T 第 5 维 sigma_Im (I_m 滑窗标准差) 窗长
+    healthy_frac: 0.05           # 每条轨迹前 5% 作健康段, 用于自校准估 Kt_hat/Tc_hat/b0_hat
+    # hi_source="Tf" 时 T̂_f 的因果滑窗均值窗长。=1 与失效判据 (瞬时 |I_m| 连续超限)
+    # 严格同源, 实测偏移恒为 0; 增大窗长会引入平滑相位差 (w=32 时最大偏移 4.3% EOL)。
+    Tf_window: 1
+    # HI 视为"达到 1.0"的判定容差 (build_hi --report / diag_split / tests 共用同一值)
+    reach_tol: 1.0e-3
+    # 未满足 persistence 的单点尖峰被压到的上限 = 1.0 - suppress_margin。
+    # 必须显著大于 reach_tol, 否则被压制的点仍会被判为"达到 1.0" ——
+    # 实测: margin=1e-6 < tol=1e-3 时 0.999999 仍算达标, 首达点提前 1907 样本 (14.5% EOL)、
+    # 达标轨迹数 63 != 失效轨迹数 60。取 1e-2 (= 10x reach_tol) 后偏移归零。
+    suppress_margin: 1.0e-2
+    # ---- S5 改动 3: 长基线趋势特征窗长 (x_T 第 9/10 维) ----
+    # 必须 >> model.input_len_L (=64)。根因: L=64 × 1800s = 32 小时, 退化横跨 3 年,
+    # 窗口内 ΔHI≈0 (S4 实测)。趋势要在**特征层**用长窗算好再喂进去 —— encoder 与 L
+    # 本阶段禁止改动。
+    # 取 2000: oracle 探针 (真值 HI 长窗斜率 → 首达换算) 在 W=1000/2000/5000 上
+    # info macro RMSE 0.2868/0.2857/0.2862, 2000 最优且已进平台区; 同时 S3 截断后
+    # 最短 train 段 1673 样本 (seed 63), 窗长再大就有轨迹整段拿不到满窗读数。
+    trend_window: 2000
+    # 不足此点数时斜率返回 0.0 ("尚无趋势证据"), 不返回 NaN —— x_T 要进 z-score 与
+    # 网络, 单个 NaN 会污染整批梯度。
+    trend_min_periods: 8
+
+# ---------- 模型 ----------
+model:
+  encoder: tcn                   # tcn | lstm | gru (后两者仅作基线)
+  input_len_L: 64                # 滑窗长, 取值 {32,64,128}
+  n_features_target: 10          # 目标域 x_T 维度 (§5.7; S5 改动 3 由 8 -> 10)
+                                 # 列序见 src/sim/build_hi.py XT_COLS:
+                                 # [I_m, omega, T, T_cmd, sigma_Im, b_hat, dT, omega_err,
+                                 #  Tf_ratio, Tf_slope]
+                                 # 第 5 维 sigma_Im = I_m 滑窗标准差 (S1 起替换原 Im_over_omega)
+                                 # 第 6 维 b_hat 为健康段自校准辨识值 (不用仿真真值 Kt/Tc)
+                                 # 第 9/10 维 S5 新增长基线趋势 (窗长 sim.hi.trend_window)
+  tcn:
+    channels: 64
+    kernel_size: 5
+    num_blocks: 4
+    dropout: 0.1
+  latent_dim: 64
+
+# ---------- 损失 (P2 预训练) ----------
+loss:
+  lambda_hi: 1.0                 # HI 头权重 (lambda1)
+  lambda_mono: 0.1               # 单调性约束 (lambda2)
+  lambda_smooth: 0.1             # 平滑约束 (lambda3)
+  huber_delta: 1.0
+
+# ---------- 预训练 (P2) ----------
+pretrain:
+  source_feature_path: data/features/wheel/schema_v1/source_features.h5
+  epochs: 50
+  batch_size: 128
+  lr: 1.0e-3
+  weight_decay: 1.0e-5
+  device: cuda                   # cuda | cpu
+  seq_block_K: 8                 # 同轴承连续窗块长 (支撑 mono/smooth)
+  stride: 1
+  hi_mono_violation_threshold: 0.05   # 预测 HI 单调违例率上限
+  val_rul_rmse_threshold: null        # 由 baseline-researcher 依文献填 (P2)
+
+# ---------- 迁移 (P5 三阶段) ----------
+transfer:
+  target_feature_path: data/features/wheel/schema_v1/target_features.h5
+  stages: [freeze, adapter, mmd] # S1 复用冻结编码器 / S2 训 adapter+头 / S3 MMD+微调
+  encoder_freeze: true           # S2 编码器冻结 (freeze-auditor 验证)
+  adapter_hidden: 64
+  align_method: mmd              # mmd (主) | coral (可选)
+  mmd_kernel: multiscale         # 多尺度高斯核
+  hi_bins:                       # 按健康阶段对齐 (绝不按绝对时间)
+    - [0.0, 0.2]                 # 健康期
+    - [0.2, 0.5]                 # 轻微退化
+    - [0.5, 0.8]                 # 明显退化
+    - [0.8, 1.0]                 # 临近失效
+  mmd_lambda: 1.0
+  split:                         # 完整轨迹划分, 禁止时间窗打散
+    train: 0.15
+    val: 0.20
+    test: 0.65
+    # ---- 按 EOL 分层划分 (S2' 改动 2) ----
+    # 背景: EOL 跨度 2121~52595 而 RUL 截顶在 18408, 随机划分下 val/test 难度不可比
+    # (S1.5 实测 val 与 test 的方法排序反相关, test/val 差 1.5~1.8 倍)。
+    # stratify_by_eol=true 时先按 EOL 分位数把轨迹分层, 层内按 seed 打乱再按比例分配,
+    # 保证三个划分的 EOL 分布一致。false 回退到 S1.5 的纯随机划分 (仅供对比)。
+    stratify_by_eol: true
+    n_eol_strata: 4              # 分层数 (按 EOL 分位数等频分箱)
+  finetune_lr: 1.0e-4
+  negative_transfer_guard: true
+
+  # ---- S3 目标域截断 + 删失损失 (协议见 docs/diagnostics_s3_protocol.md) ----
+  # 目的: 构造真实迁移场景 —— 目标域**没有见过失效**。S2.5 之前 train 9/9 条轨迹都含
+  # 完整 EOL, 迁移无从体现价值 (S0 根因 2)。S3 只截断 train, val/test 保持完整轨迹。
+  # 截断阈值: 每条被选中的 train 轨迹只保留第一次 HI_B > 0.55 之前的可观测段
+  target_truncate_hi: 0.55
+  # 截断只作用于 train (val/test 绝不截断; 由 tests/test_no_leakage.py 钉死)
+  target_truncate_train_only: true
+  # 未来正式矩阵 (S6) 预留的目标域 train 轨迹条数扫描; 本阶段不使用
+  target_train_n_traj: [3, 5, 10]
+  # 本阶段 Gate 固定只跑 5 条 train 轨迹 (从 9 条 train 划分里确定性选取)
+  s3_gate_train_n_traj: 5
+  # 删失 hinge 权重 eta: L_C = eta * mean[max(0, rul_lower_bound - pred)]^2
+  # 数学定义与 src/train/pretrain.py::_rul_loss 的删失分支完全一致 (loss.censored_hinge_eta)
+  censor_hinge_eta: 1.0
+  # S3 Gate 种子 (与 S25 调参 42/43/44、S25 gate 52~56 严格不相交)
+  s3_gate_seeds: [62, 63, 64]
+  # S3 seed-level paired bootstrap 固定种子 (描述性, 3 seed 不构成显著性证据)
+  s3_bootstrap_seed: 20260808
+  # 确定性 train 轨迹选择: 按 sha256("{seed}|{traj_id}") 升序取前 N 条
+  s3_selection_rule: sha256_seed_tid
+
+# ---------- S5 速率预测 + 物理首达换算 (改动 1/2) ----------
+# 根因 (S4 实测, 不再论证): 窗口 32h 内 ΔHI≈0, 绝对水平被逐轨迹 b0/omega0/Kt 打散
+# -> RUL 不可辨识 -> 输出坍缩为条件均值 (PSR 0.08)。
+# 解法: 网络只预测**速率** mu (窗口内局部可观测), RUL 由物理首达关系换算:
+#   RUL_hat = (hi_fail - HI_t) / mu_hat        Var = (hi_fail-HI_t)·sigma^2/mu^3
+# 首达换算实现唯一出处 = src/models/rate_head.py (Wiener+PF 基线必须复用同一模块)。
+rate:
+  enabled: true
+  # mu / sigma 的 softplus 下界。mu 贴 0 会让 RUL=余量/mu 爆炸; sigma 贴 0 会让
+  # NLL 的 log(sigma^2) -> -inf (退化解: 压 sigma 换无穷似然)。两者都必须有下界。
+  # eps_mu 单位 = ΔHI / 归一 RUL 单位。0.01 对应"走完整个 HI 量程需 100 个归一 RUL
+  # 单位" -> RUL_hat 上限约 100, 远高于截顶值 1.0, 不会把有效解夹掉。
+  eps_mu: 1.0e-2
+  eps_sigma: 1.0e-3
+  rate_hidden: 0                 # 0 = 线性头 (与 hi_head/rul_head 同构); >0 加一层 MLP
+  hi_fail: 1.0                   # 失效阈值 (HI 已归一到 1.0 = 失效, 同 baselines.hi_target)
+  # RUL_hat 换算后的上限 (归一 RUL 口径)。截顶值即 1.0, 留 1 倍余量避免把
+  # "确实还很健康"的点硬压到截顶线上; 同时防 mu 贴下界时 RUL 冲到 100 主导 Huber。
+  rul_clip: 2.0
+  # ---- 局部斜率监督目标 (L_rate 的标签) ----
+  # 由 HI 序列在**长基线**上稳健估计, 窗长走 config。用长基线的理由与 x_T 第 10 维
+  # 完全相同: 短窗斜率被量测噪声吞掉 (窗内 ΔHI≈0, 信噪比 <1)。
+  slope_window: 2000             # 与 sim.hi.trend_window 同量级 (>> L=64)
+  slope_min_periods: 8
+  slope_estimator: lsq           # lsq (长窗最小二乘) | theil_sen (稳健, 慢)
+  # theil_sen 的子采样点数 (完整 Theil-Sen 是 O(W^2), W=2000 不可接受)
+  theil_sen_subsample: 64
+  # ---- 损失权重 (改动 2) ----
+  # L = L_rate + w_rul·L_huber(仅 info 区) + w_nll·NLL
+  # L_rate 是**主项**: 标签可靠 (长基线斜率, 有 S4 证据支撑 persistence RMSE 0.0027
+  # 说明可靠时序上逐点回归易解), 且是网络唯一真正能从窗口看到的东西。
+  w_rate: 1.0
+  w_rul: 0.3                     # 换算后 RUL 的 Huber, 只在 0<RUL<1-eps 的信息区生效
+  w_nll: 0.1                     # 高斯 NLL, 让区间可校准 (区间覆盖率是完成判据之一)
+  # 速率标签的归一尺度: mu 的物理量级是 1e-5 量级 (ΔHI/样本), 乘 rul_scale 后回到
+  # O(0.1~1)。true = 用 rul_scale 换算到"归一 RUL 单位"下的速率 (与 RUL 同尺度,
+  # 使 L_rate 与 L_huber 的量级天然可比)。
+  scale_by_rul_scale: true
+  # 区间覆盖率报告用的 z 值 (1.645 = 正态双侧 90%)
+  interval_z: 1.645
+  # 截顶样本 (归一 RUL >= 1-capped_eps) 在 **L_huber** 里的权重 = 0 (S5 改动 2)。
+  # 它们仍**照常参与 L_rate** —— 截顶只是"RUL 标签被夹到上限", 速率标签依然可靠,
+  # 把这段从 L_rate 里剔掉会白扔掉早期最长的一段可靠监督。
+  # 刻意**不改 training.capped_weight** (仍 0.1): 那个键管 direct_rul 消融组的直接
+  # 回归损失, 改它会让 direct_rul 不再与 S3 数值可比, 消融就失去参照意义。
+  capped_weight: 0.0
+  # post-EOL 样本 (RUL==0) 在 L_huber 里的权重。沿用 training.post_eol_weight 同值,
+  # 保持"两段零信息平台都降权"的既有纪律 (S2' 改动 4)。
+  post_eol_weight: 0.1
+
+# ---------- 训练侧样本权重 (S2' 改动 4) ----------
+training:
+  # 失效后 (RUL==0) 的样本在损失中的权重。这类样本占比极高 (逐轨迹 65%~95.6%) 且
+  # 目标恒为 0, 全权计入会让模型把"预测 0"当捷径, 压掉信息量样本的梯度。
+  # 按此权重降权而**不硬删** (硬删会改变数据划分与窗口连续性, 违反轨迹级完整性)。
+  post_eol_weight: 0.1
+  # 截顶饱和 (归一 RUL >= 1 - evaluation.capped_eps) 样本的损失权重 (S2' 任务 2)。
+  # 由 experiments.rul_cap_ratio=0.35 造成: 早期长时段的真实 RUL 全被截到同一个上限值,
+  # 与 post-EOL 段一样是零信息量常数平台。只降权 post-EOL 而放任这一段满权, 会让
+  # 损失最优解退化成"低段输 0 / 高段输 1"的**阶跃函数** —— 实测指纹: full 口径
+  # RMSE=0.1518 却在唯一有价值的 info 区只有 0.2637 (常数预测器约 0.289)。
+  # 默认与 post_eol_weight 同值; 设 1.0 可退回 S2' 改动 4 的行为做消融。
+  capped_weight: 0.1
+
+  # ---- 训练时长 / 早停 / 正则 (S2.5) ----
+  # 这四项是 S2.5 唯一允许变动的自由度 (不改数据划分 / x_T / HI / RUL 定义 / 仿真)。
+  # 初始值 = S2'' 末的真实行为 (候选 A CURRENT), 故写入后数值完全不变;
+  # 由 scripts/diag_generalization.py --phase select 按 VAL-only 规则改写为选中候选。
+  #
+  # early_stop_metric: best checkpoint 与早停所用的 **val** 指标名, 取值见
+  #   src/experiments/run_groups.EARLY_STOP_METRICS。**只允许 val 指标**, test 永不入选。
+  #   info_pooled_rmse = S2' 行为 (calibers.info.pooled.rmse, 即 eval 顶层 rmse)
+  #   info_macro_rmse  = S2.5 目标口径 (calibers.info.macro.rmse, 轨迹等权)
+  early_stop_metric: info_macro_rmse
+  # 连续多少个 epoch 未刷新最优则提前终止。0 = 不提前终止 (跑满 max_epochs 取最优, S2' 行为)
+  early_stop_patience: 2
+  # 最大训练 epoch 数 (原先由 transfer.epochs_s2 兜底默认 20 隐式决定, 现显式化)
+  max_epochs: 8
+  # Adam 的 L2 正则强度。S2'' 及之前优化器未传该参数, 等价于 0.0
+  weight_decay: 1.0e-03
+
+# ---------- S2.5 Target-only 泛化闸门 (协议见 docs/diagnostics_s25_protocol.md) ----------
+# 目标: 在冻结数据/划分/x_T/HI/RUL/仿真的前提下, 只调"训练时长 / 早停口径 / weight_decay",
+# 判断 Target-only 是否稳定优于最强平凡基线 const_mean_info。
+# 纪律: 调参只看 train/val; test 在候选冻结前不得参与任何选择。
+s25:
+  # 调参种子 = seed + 这些偏移 (只看 val)
+  tuning_seed_offsets: [0, 1, 2]
+  # gate 种子 = seed + 这些偏移 (与调参种子必须不相交)
+  gate_seed_offsets: [10, 11, 12, 13, 14]
+  # gate 主指标: test info **轨迹宏平均** RMSE (不改全局 evaluation.primary_stat,
+  # 后者被 tests/test_metrics.py 钉死为 pooled; 此处仅指定 gate 侧取数路径)
+  gate_metric: info_macro_rmse
+  # 候选选择: 先比 mean(val_info_macro_rmse); 差值 < tie_tol 则比 std; std 也 < tie_tol
+  # 则按 simplicity_order 取更简单者。A 只作历史基线, 不参加"更简单者优先"。
+  select_tie_tol: 0.002
+  simplicity_order: [B, C, D]
+  # gate 判据阈值 (§12)
+  psr_min: 0.30              # pred_std / true_std 下限 (输出坍缩检测)
+  min_improve_count: 4       # 至少多少个 gate seed 优于 const_mean_info
+  min_corr_count: 4          # 至少多少个 gate seed 的 info macro_corr > 0
+  min_psr_count: 4           # 至少多少个 gate seed 满足 PSR >= psr_min
+  bootstrap_seed: 20260807   # seed-level paired bootstrap 的固定随机种子
+  # 四个候选 (除下列键外禁止存在其他差异; 数值在协议冻结后不得修改)
+  #   A CURRENT      = S2'' 末真实设置 (val info pooled 早停, 20 epoch, 无 patience, wd=0)
+  #   B SHORT_ES     = 换 val info macro 早停 + max_epochs 8 + patience 2
+  #   C SHORT_ES_WD1 = B + weight_decay 1e-4   (当前 wd=0, 故用 §5 主分支数值)
+  #   D SHORT_ES_WD2 = B + weight_decay 1e-3
+  candidates:
+    A: {early_stop_metric: info_pooled_rmse, max_epochs: 20, early_stop_patience: 0, weight_decay: 0.0}
+    B: {early_stop_metric: info_macro_rmse,  max_epochs: 8,  early_stop_patience: 2, weight_decay: 0.0}
+    C: {early_stop_metric: info_macro_rmse,  max_epochs: 8,  early_stop_patience: 2, weight_decay: 1.0e-4}
+    D: {early_stop_metric: info_macro_rmse,  max_epochs: 8,  early_stop_patience: 2, weight_decay: 1.0e-3}
+  # 由 --phase select 按 VAL-only 规则写入; null = 尚未冻结, gate 拒绝运行
+  selected_candidate: D
+
+# ---------- 评估口径 (S2' 改动 3) ----------
+evaluation:
+  # 三档口径对所有方法对称应用 (归一化 RUL 空间):
+  #   full  : 全部样本
+  #   valid : RUL > 0                  (剔除失效后的零难度样本)
+  #   info  : 0 < RUL < 1 - capped_eps  <- **主结论口径** (剔零难度 + 剔截顶饱和段)
+  # 每档同时给池化 (pooled, 全样本一起算) 与宏平均 (macro, 先算每轨迹再对轨迹平均)。
+  calibers: [full, valid, info]
+  primary_caliber: info        # 早停信号与主结论均用此口径的 val RMSE
+  primary_stat: pooled         # pooled | macro (早停用的统计口径)
+  # "已达截顶上限"的判定容差 (归一 RUL 口径)。同时被 info 口径掩码与
+  # training.capped_weight 使用, 保证"评估剔掉的段"与"训练降权的段"严格是同一批样本。
+  capped_eps: 1.0e-6
+
+  # ---- S4 可解释性 / 分阶段 / 预警 指标阈值 (docs/diagnostics_s4_protocol.md) ----
+  # 纯**新增**评价口径: 不参与训练、不参与早停、不改变任何 S2.5/S3 数字。
+  # 所有方法 (三迁移组 + physical_extrap + trivial) 共用这一份阈值 -> 口径必然一致。
+  prognostics:
+    # HI 健康阶段分箱 (半开区间 [lo, hi))。末箱上界 1.000001 用于纳入 HI==1.0,
+    # 否则 HI 恰为 1 的窗末点会掉出所有箱、被静默丢弃。
+    # 与 transfer.hi_bins (MMD 对齐用) 数值同源但用途不同, 各自独立冻结。
+    hi_bins: [[0, 0.2], [0.2, 0.5], [0.5, 0.8], [0.8, 1.000001]]
+    # alpha 误差带: |pred - true| <= max(alpha * true_rul, absolute_floor)
+    alpha: 0.20
+    # absolute_floor 存在的理由: true_rul -> 0 时纯相对带收缩到 0, 任何有限精度预测
+    # 都必然脱靶, PH / alpha-lambda@0.7 会退化为度量伪影。此值必须来自 config。
+    absolute_floor: 0.02
+    alpha_lambda:
+      lambdas: [0.3, 0.5, 0.7]   # 生命周期位置 tau; 每轨迹每 lambda 只贡献 1 个判定
+    warning:
+      rul_threshold: 0.20        # 归一 RUL 口径
+      persistence: 3             # 连续满足的 evaluator endpoint 数
+    convergence:
+      normalize_time: true       # tau 归一到 [0,1] 后做梯形积分
+      late_from: 0.5             # late_convergence 只统计 tau >= 此值的区段
+
+# ---------- 平凡 / 物理基线 (S2' 任务 1 & 4) ----------
+baselines:
+  # 滑窗线性外推的拟合窗长 (physical_extrap 用 b̂ / trivial.hi_extrap 用 HI)
+  extrap_window: 50
+  smooth_window: 30            # b̂ 的 uniform_filter1d 平滑窗 (抑噪, 再做趋势外推)
+  hi_target: 1.0               # HI 外推的失效阈值 (HI 定义已归一到 1.0 = 失效)
+
+  # ---- S5B: Wiener 过程 + 粒子滤波统计寿命预测基线 ----
+  # 全部键在 docs/diagnostics_s5b_protocol.md §9 冻结, 产生第一条 PF test
+  # prediction 后不得修改。hi_target / L / stride / cap_eps / rul_scale 推导
+  # 一律复用上方与 model/transfer/evaluation 下的已有键, 不在此重复定义。
+  wiener_pf:
+    n_particles: 2048          # 粒子数 (2 维参数空间, 2048 足够覆盖 log_mu×log_sigma)
+    ess_ratio: 0.50            # ESS < ess_ratio·N 时做 systematic resample
+    min_points: 8              # 少于此数的已观测 endpoint 记为 prior-only (仍出预测)
+    prior:
+      estimator: median_mad    # 稳健统计: median + 1.4826·MAD (只用 train 可见段增量)
+      # 只有 5 条 train 轨迹, MAD 可能退化为 0 -> 先验方差为 0 会让粒子云塌成一点、
+      # 滤波完全无法自适应。下界是**数值稳健性措施**, 不是为改善 test RMSE 而设
+      # (协议 §5, 出数前写定)。
+      min_log_mu_std: 0.20
+      min_log_sigma_std: 0.20
+    observation:
+      sigma_floor: 0.005       # 观测似然方差下界 (HI 量化/舍入噪声, 防似然退化为 delta)
+    numerical:
+      eps_mu: 1.0e-6           # mu 下界 (mu->0 时 RUL->inf)
+      eps_sigma: 1.0e-6        # sigma 下界 (sigma->0 时 IG 形状参数 ->inf)
+      eps_distance: 1.0e-6     # 失效距离 a = max(1-h, eps) 下界 (h>=1 的越阈点)
+    quantiles: [0.05, 0.50, 0.95]   # q05 / median / q95 -> 90% 双侧区间
+
+# ---------- 基线与对比实验 (P6) ----------
+experiments:
+  n_seeds: 5
+  groups: [target_only, source_frozen, source_finetune, source_mmd_finetune, physical_extrap]
+  rul_cap_ratio: 0.35
+  bootstrap_samples: 10000
+
+# ---------- 复现性 ----------
+reproducibility:
+  deterministic: true            # cudnn 确定性模式
+  cudnn_benchmark: false

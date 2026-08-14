@@ -1,0 +1,165 @@
+# configs/wheel_basilisk_b11.yaml
+#
+# Basilisk-B1.1 —— 峰值口径对齐的退化重标定。
+#
+# 继承链: configs/wheel.yaml (退化物理唯一定义)
+#          <- configs/wheel_basilisk.yaml (Basilisk 工况库 / spacecraft / bridge)
+#          <- 本文件 (峰值口径 reference + candidate registry + b11 隔离路径)
+#
+# ============================================================================
+# B1.1 唯一改动 (§3)
+# ============================================================================
+# B1 的 utilization wear 标定用 **window-RMS** 参考:
+#     su_ref_rms = mean_over_modes( mean_over_windows( omega_rms / omega_rated ) )
+# 但失效判据是 **pointwise current peak**:
+#     |I_m| > Im_rated 连续 persistence_samples 点
+# Basilisk 五模式工况的波峰因数远高于旧 analytic 正弦工况, 因此 RMS 等效的标定在
+# peak 判据下过度消耗初始电流裕度 -> B1 三个 candidate 的 failure_fraction
+# 0.8833 / 0.9167 / 0.9333 全部冲破 [0.35, 0.80] 带宽。
+#
+# B1.1 只做一件事: 把**用于 b0/wear 标定的参考利用率**从 RMS 口径换成 p95 口径,
+# 使标定口径与失效判据口径一致。
+#
+# 明确不改 (由 tests/basilisk_b11 硬测试钉死):
+#   * wear 数学结构 (g_duty 公式 / 指数 / clip) —— 直接 import B1 的实现;
+#   * g_duty 的权重与指数 (下方 wear_drive 与 B1 逐值相同);
+#   * mode weights (继承 wheel_basilisk.yaml, 一字未动);
+#   * HR16 rated values (运行时从 rwFactory 复核);
+#   * failure criterion (Im_rated / persistence_samples 继承 wheel.yaml, 本文件不出现);
+#   * src/sim/wheel_sim.py (契约冻结, 逐字节不变)。
+#
+# 铁律: 本文件任何数值都**不允许**为让 failure fraction 好看而调整。
+#       reference 由已冻结 profiles.h5 运行时算出, 不是旋钮。
+
+base_config: configs/wheel_basilisk.yaml
+
+# 与 B1 candidate 相同的预先登记统一 seed (§8)。刻意保持一致: 这样 B1.1 的第 i 条
+# 轨迹与 B1 的第 i 条拥有相同初始物理参数与相同 duty, 唯一差异就是标定口径 ——
+# B1 vs B1.1 的对比因此是配对比较, 而不是两批不同的随机数。
+seed: 20260809
+
+# ---------- HR16 额定值 (与 B1 逐值相同; §5 不得改动) ----------
+# provenance: Basilisk simIncludeRW.rwFactory().create("Honeywell_HR16", axis,
+#   maxMomentum=<sim.spacecraft.rw.max_momentum_Nms>) 返回对象属性。
+#   audit_peak_reference.py 运行时复核, 不一致即报错停止。
+rated:
+  source: basilisk_rwFactory_Honeywell_HR16
+  omega_rated_rad_s: 628.3185307179587
+  torque_rated_Nm: 0.2
+  rotor_inertia_Js_kgm2: 0.07957747154594767
+  rotor_mass_kg: 9.0
+  u_s_Nm: 2.8e-06
+  u_d_Nm: 7.7e-07
+  tol_rel: 1.0e-09
+
+# ---------- B1.1 §3: reference 口径 (本阶段的唯一改动点) ----------
+reference:
+  # 'p95' = 与失效判据 (pointwise peak) 同口径; 'rms' = B1 的旧口径 (仅供审计对比)
+  caliber: p95
+  # 逐窗利用率取哪个 duty 统计量 (来自 basilisk_bridge.aggregate_window, 天然存在,
+  # 不新增任何统计 -> basilisk_bridge.py 无需改动, 其 hash 保持冻结)
+  speed_stat: omega_p95
+  torque_stat: torque_p95
+  # B1 旧口径的对应统计量 (审计时并列打印, 用于给出 p95/rms 比值)
+  speed_stat_rms: omega_rms
+  torque_stat_rms: torque_rms
+  # 窗聚合规则必须与 B1 完全一致, 否则不是"只换口径"
+  aggregate: non_overlapping_windows_equal_weight_per_mode
+
+# ---------- wear 时钟 (与 B1 **逐值相同**, §2 不得改) ----------
+# 只有 su_ref / tu_ref 的口径变了; 权重、指数、clip 一个数都没动。
+# tests/basilisk_b11/test_b11_protocol_frozen.py 会与 B1 config 逐键比对。
+wear_drive:
+  reference: all_mode_ensemble_mean
+  speed_util_weight: 0.40
+  torque_util_weight: 0.40
+  zero_crossing_weight: 0.10
+  maneuver_weight: 0.10
+  speed_util_exponent: 2.0
+  torque_util_exponent: 1.0
+  ref_floor: 1.0e-04
+  g_duty_max: 20.0
+
+# ---------- §7: 预先登记的 candidate registry (冻结, 只允许这三个) ----------
+# 三者退化尺度完全相同 (同 derived b0_scale / 同 g_duty / 同 reference),
+# 唯一差异 = mission horizon。禁止新增 D/E。
+candidates:
+  registry: [P95_UTILIZATION_ONLY, P95_UTILIZATION_DURATION_1P5,
+             P95_UTILIZATION_DURATION_2P0]
+  n_traj: 60
+  priority: [P95_UTILIZATION_ONLY, P95_UTILIZATION_DURATION_1P5,
+             P95_UTILIZATION_DURATION_2P0]
+  spec:
+    P95_UTILIZATION_ONLY:
+      horizon_scale: 1.0          # 3.0 年
+      use_utilization_wear: true
+    P95_UTILIZATION_DURATION_1P5:
+      horizon_scale: 1.5          # 4.5 年
+      use_utilization_wear: true
+    P95_UTILIZATION_DURATION_2P0:
+      horizon_scale: 2.0          # 6.0 年
+      use_utilization_wear: true
+
+# ---------- §6/§9: candidate 物理 Gate (12 条, 全部满足才 eligible) ----------
+# 1-10 与 B1 逐值相同 (不放宽!); 11/12 是 B1.1 新增。
+# 绝不含任何 RUL / 模型指标, 由 tests/basilisk_b11 的两个 AST 硬测试钉死。
+gate:
+  failure_fraction_min: 0.35
+  failure_fraction_max: 0.80
+  censored_fraction_min: 0.15
+  min_event_observed: 20
+  eol_at_horizon_end_frac_max: 0.35
+  eol_iqr_min: 1.0
+  b_monotone_frac_min: 0.99
+  temperature_min_K: 200.0
+  temperature_max_K: 400.0
+  current_absmax_A: 50.0
+  wear_ordering_min_spearman: 0.0
+  # --- Gate 11 (新增): early-EOL concentration ---
+  # B1 的 Gate 4/5 只防"EOL 挤在末端", 不防"挤在开头" —— 这是 B1 Gate 集合的盲区
+  # (见 docs/basilisk_b1/limitations.md §4)。B1.1 补上。
+  early_eol_horizon_frac: 0.10     # "早期" = 前 10% horizon
+  early_eol_frac_max: 0.30         # 早期失效轨迹占比上界
+  # --- Gate 12 (新增): initial current margin ---
+  # B1 失败的最直接指标, 但当时没有任何 Gate 约束它。
+  # 逐轨迹: p95(|I_m| 在初始健康窗) / Im_rated; 再对 trajectory-level ratio 取 p95。
+  # 用窗内 p95 而非单个极端时间点 (§6 明令)。
+  initial_margin_healthy_frac: 0.05   # 必须等于 sim.hi.healthy_frac (测试钉死)
+  initial_margin_ratio_max: 0.50
+
+# ---------- §14: 150 条正式数据集质量 Gate ----------
+data_gate:
+  event_observed_frac_min: 0.35
+  censored_frac_min: 0.15
+  min_event_observed_traj: 40
+  early_eol_frac_max: 0.30
+  initial_margin_ratio_max: 0.50
+  hi_p95_min: 0.80
+  b_hat_p95_rel_err_max: 0.10
+
+# ---------- §16: Feature Gate ----------
+feature_gate:
+  hi_p95_min: 0.80
+  b_hat_p95_rel_err_max: 0.10
+
+# ---------- 下一阶段 split 建议 (只写文档, B1.1 不执行) ----------
+next_split:
+  train_frac: 0.30
+  val_frac: 0.20
+  test_frac: 0.50
+  stratify: [event_observed, censored]
+  level: trajectory
+
+# ---------- B1.1 隔离路径 (绝不覆盖 basilisk_v1 / basilisk_b1) ----------
+paths:
+  # profile 库复用 basilisk_v1 已冻结产物 (只读, 不重新生成)
+  profile_h5: data/mission_profile/basilisk_v1/profiles.h5
+  sim_dir: data/sim/wheel_basilisk_b11
+  candidate_dir: data/sim/wheel_basilisk_b11/candidates
+  feature_h5: data/features/wheel/basilisk_b11/target_features.h5
+  ckpt_dir: checkpoints/basilisk_b11
+  doc_dir: docs/basilisk_b11
+
+transfer:
+  # 仅为路径一致性记录; B1.1 §17 明确不训练任何 RUL 模型
+  target_feature_path: data/features/wheel/basilisk_b11/target_features.h5

@@ -1,0 +1,259 @@
+# configs/wheel_basilisk_b5.yaml
+#
+# BASILISK-B5 —— Formal Transfer Evaluation on Frozen B2.1 Split
+#
+# ############################################################################
+# 这是第一次允许产生"正式迁移结论"的阶段。
+#
+# 前置冻结事实 (只读, 不得覆盖、不得重新解释):
+#   * B21_GENERALIZATION_PASS (7/7), split_sha256 = 23e2b944...5c932
+#   * B2_GENERALIZATION_FAIL 在其自身划分上保持终局
+#   * B3X_NO_STABILIZING_SIGNAL  -> 正式输入 schema 固定 CORE_ONLY
+#   * B4X_TRANSFER_STABILIZATION_SIGNAL 仅探索性, **不得继承为正式结论**
+#
+# 本阶段禁止调任何模型或迁移超参: architecture / optimizer / loss weights /
+# early stopping / HI / RUL / mission profile / split / source checkpoint /
+# mmd_lambda 一律沿用冻结值。B1.8 / B1.9 / B2 / B2.1 / B3X / B4X /
+# analytic S2.5-S5B 的产物一律只读。
+#
+# §15: 正视迁移判定与工程推荐是**两个不同的问题**。允许出现
+#      B5_FT_POSITIVE_TRANSFER = true 而 ENGINEERING_RECOMMENDATION =
+#      damage_extrapolation。
+# §20: B5 完成即停。B6 只写计划, 不自动执行。
+# ############################################################################
+base_config: configs/wheel_basilisk_b21.yaml
+
+paths:
+  # ---- 只读输入 ----
+  b19_feature_h5: data/features/wheel/basilisk_b19/target_features.h5
+  b21_split_json: docs/basilisk_b21/split_manifest.json
+  b21_summary_json: checkpoints/basilisk_b21/summary.json
+  b21_metrics_json: checkpoints/basilisk_b21/gate_metrics.json
+  b21_protocol_hash: checkpoints/basilisk_b21/protocol_hash.json
+  b3x_summary_json: checkpoints/basilisk_b3x/summary.json
+  b4x_summary_json: checkpoints/basilisk_b4x/summary.json
+  source_checkpoint: checkpoints/source_tcn_pretrain.pt
+  # ---- B5 自己的输出 (独立命名空间) ----
+  ckpt_dir: checkpoints/basilisk_b5
+  doc_dir: docs/basilisk_b5
+  metrics_json: checkpoints/basilisk_b5/formal_metrics.json
+  raw_npz: checkpoints/basilisk_b5/formal_raw.npz
+  gain_json: checkpoints/basilisk_b5/paired_gain.json
+  lifetime_json: checkpoints/basilisk_b5/lifetime_bins.json
+  warning_json: checkpoints/basilisk_b5/warning_metrics.json
+  summary_json: checkpoints/basilisk_b5/summary.json
+
+protocol:
+  path: docs/basilisk_b5/protocol.md
+  hash_path: checkpoints/basilisk_b5/protocol_hash.json
+
+b5:
+  label: FORMAL_TRANSFER_EVALUATION
+  formal_stage: true          # 与 B4X 的 formal_stage: false 对立
+
+  # ---------- §0 三个正式问题 ----------
+  questions:
+    Q1: source_finetune_stably_better_than_target_only_on_covered_split
+    Q2: source_mmd_finetune_stably_better_than_target_only_on_covered_split
+    Q3: does_transfer_still_lose_to_damage_extrapolation
+
+  # ---------- §0 前置冻结事实 ----------
+  frozen_facts:
+    b21_verdict: B21_GENERALIZATION_PASS
+    b21_split_sha256:
+      23e2b94445e698eab263ca17a36d99f7130eb2e8c5c3b9b8d0bd9ba772e5c932
+    b21_target_only_mean_info_macro_rmse: 0.244121
+    b21_damage_extrapolation_info_macro_rmse: 0.054316
+    b2_verdict: B2_GENERALIZATION_FAIL
+    b2_verdict_status: B2_GENERALIZATION_FAIL_REMAINS_FINAL
+    b3x_verdict: B3X_NO_STABILIZING_SIGNAL
+    b4x_verdict: B4X_TRANSFER_STABILIZATION_SIGNAL
+    b4x_status: EXPLORATORY_ONLY
+    b4x_must_not_be_promoted: true
+    forbid_retune_any_model_or_transfer_hyperparam: true
+
+  # ---------- §1 禁改面 ----------
+  forbidden_changes: [b18, b19, b2, b21, b3x, b4x, analytic_s25_to_s5b,
+                      source_checkpoints, model_architecture, mmd_lambda,
+                      optimizer, loss_weights, early_stopping, hi, rul,
+                      mission_profile, split]
+
+  # ---------- §2/§3 划分与输入 schema ----------
+  split:
+    reuse_from: docs/basilisk_b21/split_manifest.json
+    expected_sha256:
+      23e2b94445e698eab263ca17a36d99f7130eb2e8c5c3b9b8d0bd9ba772e5c932
+    forbid_restratify: true
+    require_b21_verdict: B21_GENERALIZATION_PASS
+    invalid_label: B5_INVALID
+  input_schema:
+    formal: CORE_ONLY
+    decided_by: checkpoints/basilisk_b3x/summary.json::b4x_input_schema
+    rule:
+      B3X_STABILIZING_SIGNAL: core_plus_mission
+      B3X_NO_STABILIZING_SIGNAL: core_only
+    forbid_mission_features: true
+    # x_T 里绝不允许出现这些列 (HI 监督目标 / 真值 / 未来统计 / EOL 信息)
+    forbidden_input_cols: [hi_damage_obs, hi_friction, hi_a, b_true, rul,
+                           rul_lower_bound, label_fail, eol_idx, D_true]
+    shared_across_groups: true
+
+  # ---------- §4 正式比较组 ----------
+  trained_groups: [target_only, source_finetune, source_mmd_finetune]
+  eval_only_groups: [const_mean_info, damage_extrapolation]
+  forbid_new_transfer_methods: true      # 不得出现第四种迁移方法
+
+  # ---------- §5 全新正式 seeds ----------
+  seeds: [112, 113, 114, 115, 116]
+  forbid_reused_seeds: [102, 103, 104, 105, 106,   # B2.1 开发 seed
+                        92, 93, 94,                # B4X new
+                        72, 73, 74, 75, 76]        # B2 / B4X replay
+  seed_role: formal_confirmatory_not_development
+
+  # ---------- §6 三个学习组严格配对 ----------
+  fairness:
+    same_train_ids: true
+    same_val_ids: true
+    same_test_ids: true
+    same_target_batch_order: true
+    same_target_preprocessing: true
+    same_optimizer: true
+    same_epoch_budget: true
+    same_early_stop_metric: true
+    same_checkpoint_selection_rule: true
+    same_evaluator: true
+    # 唯一允许的差异
+    allowed_differences:
+      target_only: random_target_initialization
+      source_finetune: frozen_source_pretrained_initialization
+      source_mmd_finetune: source_pretrained_initialization_plus_frozen_mmd
+    forbid_extra_epochs_for_failing_group: true
+    # 三组共用 source encoder 的输入宽度, 否则权重不可能逐值同源。
+    # 因此 B5 的 target_only 是**本阶段重跑**, 不等于 B2.1 表里的 0.2441。
+    shared_n_features: 12
+    target_only_is_rerun_not_b21_number: true
+
+  # ---------- §7 checkpoint 选择 ----------
+  checkpoint:
+    selection: validation_only
+    forbid_test_based_selection: true
+    forbid_test_based_early_stopping: true
+    forbid_cross_seed_best_pick: true
+    forbid_cross_seed_group_swap: true
+    record_per_group: [best_epoch, val_metric, checkpoint_sha256]
+
+  # ---------- §8 主指标与 gain 定义 ----------
+  primary_metric: test_info_trajectory_macro_rmse
+  gains:
+    gain_ft: target_only_minus_source_finetune
+    gain_mmd: target_only_minus_source_mmd_finetune
+    positive_means: transfer_improves
+
+  # ---------- §9 正式 positive-transfer gate (FT / MMD 各自独立判定) ----------
+  gate:
+    min_improve_count: 4              # 条件1: >=4/5 seeds gain>0
+    require_mean_positive: true       # 条件2
+    require_median_positive: true     # 条件3
+    require_ci_lower_positive: true   # 条件4
+    corr_tol: 0.02                    # 条件5: src corr mean >= target corr mean - 0.02
+    require_catastrophic_not_worse: true          # 条件6
+    warning_miss_tol: 0.05            # 条件7: miss <= target miss + 0.05
+    min_lifetime_bins_gain_positive: 2            # 条件8: 3 段中 >=2 段 gain>0
+    n_lifetime_bins: 3
+    forbid_lowering_bar: true
+    labels:
+      ft_pass: B5_FT_POSITIVE_TRANSFER
+      ft_fail: B5_FT_NO_POSITIVE_TRANSFER
+      mmd_pass: B5_MMD_POSITIVE_TRANSFER
+      mmd_fail: B5_MMD_NO_POSITIVE_TRANSFER
+      both_fail: B5_NO_POSITIVE_TRANSFER
+
+  # ---------- §10 paired bootstrap ----------
+  bootstrap:
+    unit: seed_level_paired_gain
+    n: 5
+    samples: 5000
+    seed: 20260814
+    forbid_endpoint_bootstrap: true
+    forbid_trajectory_count_significance: true
+    report: [mean, median, std, ci95, improve_count]
+
+  # ---------- §11/§12 lifetime-bin 分析 ----------
+  lifetime_bins:
+    source: docs/basilisk_b21/split_manifest.json::lifetime_bins.event
+    names: [short, medium, long]
+    forbid_recompute_from_b5_test: true
+    per_group_metrics: [rmse, mae, corr, warning_coverage, catastrophic_count]
+    short_life_extra: [mean_rmse, per_seed_rmse, catastrophic_count,
+                       pred_std, true_std]
+    localized_benefit_label: localized_transfer_benefit
+
+  # ---------- §12/§13 catastrophic + warning ----------
+  catastrophic:
+    multiplier: 2.0
+    threshold_source: target_only_validation_median_trajectory_rmse
+    forbid_test_derived_threshold: true
+    definition: trajectory_rmse_gt_multiplier_times_val_median
+    shared_threshold_across_groups: true
+  warning:
+    metrics: [warning_coverage, miss_rate, coverage_before_eol,
+              miss_rate_before_eol, false_alarm_rate, ph, alpha_lambda,
+              convergence]
+    forbid_hiding_miss_rate: true
+    forbid_nan_to_zero: true
+    require_n_evaluable: true
+
+  # ---------- §14 damage_extrapolation 是强基线 ----------
+  damage_baseline:
+    keep_in_main_table: true
+    forbid_footnote_only: true
+    comparison: transfer_vs_damage_equals_rmse_damage_minus_rmse_transfer
+    negative_means: transfer_worse_than_physics
+    mandatory_phrasing_when_negative: >-
+      迁移模型可能相对 Target-only 有增益, 但未达到物理 damage extrapolation 基线。
+    forbid_calling_positive_transfer_the_best_method: true
+
+  # ---------- §15 工程推荐与迁移判定分离 ----------
+  engineering_recommendation:
+    candidates: [target_only, source_finetune, source_mmd_finetune,
+                 damage_extrapolation]
+    basis: formal_test_table_primary_metric
+    forbid_narrative_basis: true
+    separate_from_transfer_verdict: true
+    excluded_oracle_methods: [persistence, true_rul_lookup]
+
+  # ---------- §16 MMD 特别纪律 ----------
+  mmd:
+    lambda_from: transfer.mmd_lambda
+    frozen: true
+    forbid_grid_search: true
+    forbid_seed_specific_lambda: true
+    forbid_tuning_on_b5_test: true
+    forbid_reselecting_source_layers: true
+    on_failure: declare_no_positive_transfer
+
+  # ---------- §17 输出稳定性 (诊断项, 不进 gate) ----------
+  output_stability:
+    report: [pred_std, true_std, psr]
+    high_variance_psr: 3.0
+    high_variance_label: HIGH_VARIANCE_WARNING
+    in_gate: false
+    reason: protocol_frozen_before_any_number
+
+  # ---------- §18 正式结果表 ----------
+  results_table:
+    rows: [target_only, source_finetune, source_mmd_finetune,
+           const_mean_info, damage_extrapolation]
+    cols: [info_macro_rmse, info_pooled_rmse, mae, corr, psr,
+           warning_coverage, miss_rate, ph, alpha_lambda,
+           catastrophic_rate]
+    keep_per_seed_detail: true
+
+  # ---------- §19/§20 出口 ----------
+  exit_rules:
+    stop_after_b5: true
+    forbid_auto_run_b6: true
+    forbid_auto_low_data_matrix: true
+    next_stage_on_positive: "B6: low-data / truncation transfer matrix"
+    next_stage_on_negative:
+      "B6: baseline formal matrix + negative-transfer conclusion"

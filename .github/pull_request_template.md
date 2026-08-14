@@ -32,6 +32,16 @@
 
 <!-- 必填：本次变更可能引入的风险（复现性、性能、兼容性等）及影响面 -->
 
+## release/ 层级与代码清单
+
+<!-- 必填：确认 release/src、release/scripts 层级未破坏（tests/test_repository_boundary.py 通过）；
+是否新增/删除/修改 release/ 下受跟踪文件，release/CODE_MANIFEST.sha256 是否已同步重新生成 -->
+
+## 线下工件边界
+
+<!-- 必填：确认 release/data|checkpoints|results 与根 data/|results/|checkpoints/ 无受跟踪文件；
+涉及线下工件校验时给出 `verify_manifest.py --artifact-root` 的结果，未装配则写 NOT_RUN+原因 -->
+
 ## 回退方式
 
 <!-- 必填：出问题时如何回退（revert commit / 版本号 / 数据回滚等） -->

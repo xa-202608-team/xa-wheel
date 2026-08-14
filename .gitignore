@@ -21,3 +21,21 @@ wandb/
 
 # 大型或不可再分发数据不入库（经 manifest + 下载/生成脚本 + SHA256 治理）
 # 允许进入 Git 的小型 fixture 必须放在 tests/fixtures/，不得用宽泛的 data/ 例外绕过治理
+
+# 线下工件槽位：整目录忽略，内容（含本地槽位说明 README）不入库。
+# 槽位映射真值 = handoff/artifact-map.yaml；装配步骤见 handoff/HANDOFF.md
+/data/
+/results/
+/checkpoints/
+
+# release/ 下的工件槽位（装配时才落盘，防御性排除）
+/release/data/
+/release/checkpoints/
+/release/results/
+
+# 原交付 RELEASE_MANIFEST.sha256（470 条，含线下工件条目）：
+# 线下参考输入，不作为 Git 代码校验真值（真值 = release/CODE_MANIFEST.sha256）
+/release/RELEASE_MANIFEST.sha256
+
+# 本地私有内容（PR body 等，绝不入库）
+.private/

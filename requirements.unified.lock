@@ -1,0 +1,20 @@
+# 飞轮组件统一环境依赖锁 —— 与相控阵组件逐版本对齐
+#
+# 任务依据: wheel_docker_unified_environment_agent_goal.md 完成条件
+#   wheel 与 phased_array 的下列版本必须逐项相等:
+#     Python 3.12.x / torch 2.11.0 / numpy 2.4.3 / pandas 3.0.3 / scipy 1.17.1
+#     scikit-learn 1.9.0 / PyYAML 6.0.3 / h5py 3.16.0
+#     matplotlib 3.10.9 / pytest 9.0.3 / tqdm 4.67.3
+#
+# torch 由 Dockerfile 单独从 cu130 源安装 (==2.11.0, 与相控阵同);
+# 此处 torch>=2.10 在 Dockerfile 已装好后不会重装, 仅声明版本下界。
+torch>=2.10
+numpy==2.4.3
+pandas==3.0.3
+scipy==1.17.1
+scikit-learn==1.9.0
+PyYAML==6.0.3
+h5py==3.16.0
+matplotlib==3.10.9
+pytest==9.0.3
+tqdm==4.67.3

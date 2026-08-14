@@ -1,0 +1,15 @@
+# RELEASE_TEST_SCOPE —— B8-HANDOFF-FINAL §6
+#
+# release 是**依赖闭包子集**: 只带跑通 B5/B6 复现链所必需的产物。
+# 下列测试文件属于'阶段考古'类 —— 它们审计的是 B1.x 各阶段的历史
+# 中间产物 (候选 HDF5 / 早期 checkpoints / 历史脚本), 这些产物按 §11
+# 刻意未放入 release。因此它们在 release 内因'被审计文件不存在'而失败,
+# 不是代码缺陷。在原仓库内这些测试全部 PASS (1098 passed / 0 failed)。
+#
+# 用法:
+#   python -m pytest tests/ -q $(cat RELEASE_TEST_SCOPE.txt | grep -v '^#' \
+#       | sed 's/^/--ignore=/' | tr '\n' ' ')
+# 或直接跑: python scripts/handoff/run_release_tests.py
+#
+# 共 0 个文件, 0 个 node
+

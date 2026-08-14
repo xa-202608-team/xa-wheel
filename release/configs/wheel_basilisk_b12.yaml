@@ -1,0 +1,212 @@
+# configs/wheel_basilisk_b12.yaml
+#
+# Basilisk-B1.2 —— HR16 电气参数溯源 + 失效判据物理一致性重整。
+#
+# --------------------------------------------------------------------------
+# 与 B1.1 的关系
+# --------------------------------------------------------------------------
+# B1.1 已证明: b0_scale 继续调整无法解决 Gate 12 —— 健康窗 command torque 项单独
+# 就给出 initial_margin_ratio p95 = 0.7396 > 0.50, 与 b0_scale 无关。
+# 根因是 Kt_nom·Im_rated = 0.0375 N·m << HR16 u_max = 0.2 N·m, 即"额定电流产生不出
+# 额定力矩"。B1.2 不再动标定尺度, 而是:
+#   (a) 为 HR16 电气参数建立可信 provenance (§3/§4);
+#   (b) 判断 current-based EOL 是否物理自洽 (§6);
+#   (c) 在三个**预先登记**的失效判据变体中用纯物理/分布 Gate 选一个 (§7/§12)。
+#
+# --------------------------------------------------------------------------
+# 铁律 (§2)
+# --------------------------------------------------------------------------
+# * 不调 b0_scale 追 failure fraction; 不改 wear 数学结构 / g_duty / mode weights;
+# * 不改 Basilisk profile; 不改 HR16 omega_rated / torque_rated;
+# * 不用 RUL / 模型指标选 candidate; 本阶段不训练任何模型;
+# * 不为通过 Gate 手工填 Im_rated。
+# 全部由 tests/basilisk_b12 的 AST / 数值测试钉死。
+
+base_config: configs/wheel_basilisk.yaml
+
+# 沿用 B1/B1.1 的统一 seed: 第 i 条轨迹与 B1.1 第 i 条拥有逐值相同的初始物理参数与
+# duty, 于是 B1.1 vs B1.2 也是配对比较 —— 唯一差异是失效判据 (§11)。
+seed: 20260809
+
+# ---------- HR16 额定值 (§2 不得改动, 与 B1/B1.1 逐值相同) ----------
+rated:
+  source: basilisk_rwFactory_Honeywell_HR16
+  omega_rated_rad_s: 628.3185307179587
+  torque_rated_Nm: 0.2
+  rotor_inertia_Js_kgm2: 0.07957747154594767
+  rotor_mass_kg: 9.0
+  u_s_Nm: 2.8e-06
+  u_d_Nm: 7.7e-07
+  tol_rel: 1.0e-09
+
+# ---------- 退化标定: 完全沿用 B1.1 冻结口径 (§2 不得改) ----------
+# reference / wear_drive 与 configs/wheel_basilisk_b11.yaml 逐值相同。
+# 测试 test_b12_wear_identical_to_b11 会逐键比对; b0_scale 由运行时推导,
+# 必须复现 B1.1 的 5.906442914788147 (不硬编码, 由 assert 对齐 B1.1 记录)。
+reference:
+  caliber: p95
+  speed_stat: omega_p95
+  torque_stat: torque_p95
+  speed_stat_rms: omega_rms
+  torque_stat_rms: torque_rms
+  aggregate: non_overlapping_windows_equal_weight_per_mode
+
+wear_drive:
+  reference: all_mode_ensemble_mean
+  speed_util_weight: 0.40
+  torque_util_weight: 0.40
+  zero_crossing_weight: 0.10
+  maneuver_weight: 0.10
+  speed_util_exponent: 2.0
+  torque_util_exponent: 1.0
+  ref_floor: 1.0e-04
+  g_duty_max: 20.0
+
+# ---------- §3/§4: 电气 provenance 审计 ----------
+electrical:
+  # 允许作为最终 provenance 的来源类型 (§3 D: 论坛/博客/二手网页一律不算)
+  allowed_source_types:
+    - basilisk_official_source     # 已安装 Basilisk 包内的官方模块源码
+    - manufacturer_datasheet       # 厂商官方 datasheet 文件 (需本地存在)
+    - nasa_official                # NASA 官方技术报告
+  # 本仓库内允许被当作 datasheet 搜索的位置 (存在即读, 不存在记 UNAVAILABLE)
+  datasheet_search_globs:
+    - data/datasheets/**/*.pdf
+    - docs/datasheets/**/*.pdf
+    - data/raw/HR16/**/*
+  # Basilisk 官方 RW 定义所在模块 (运行时按文件读取, 不 import 私有属性)
+  basilisk_modules:
+    - Basilisk/utilities/simIncludeRW.py
+    - Basilisk/utilities/datasheet_RW.py
+  # 需要溯源的电气/机械参数清单 (§3)
+  required_params:
+    - rated_continuous_motor_current_A
+    - peak_motor_current_A
+    - motor_torque_constant_Nm_per_A
+    - continuous_torque_Nm
+    - peak_torque_Nm
+    - max_wheel_momentum_Nms
+    - max_wheel_speed_rad_s
+  # §4 一致性判据: torque_ratio = (Kt·Im_rated)/u_max 落在此带内才算自洽。
+  # 带宽含义: 电机额定电流至少要能产生额定力矩的 consistency_ratio_min 倍。
+  # 不得为让判断变成 CONSISTENT 而放宽 (§4 明令)。
+  consistency_ratio_min: 0.90
+  consistency_ratio_max: 1.20
+
+# ---------- §6: 失效机理审计 ----------
+mechanism_audit:
+  # 审计读取的已冻结数据集 (只读, B1.1 candidate A11 = 与 B1.2 同 wear 尺度)
+  source_candidate_h5: data/sim/wheel_basilisk_b11/candidates/P95_UTILIZATION_ONLY/wheel_all.h5
+  # degradation_fraction_at_eol 的判据阈值 (§6 明令预先登记, 事后不得改)
+  degradation_fraction_threshold: 0.50
+  eps: 1.0e-12
+
+# ---------- §7/§9: 三个预先登记的失效判据变体 ----------
+failure_candidates:
+  registry: [FRICTION_TORQUE_P95, VISCOUS_FRICTION_STATE, CURRENT_WINDOW_P95]
+  # §13 预先登记的优先序 (F2 > F3 > F1), 禁止按 failure fraction 重排
+  priority: [FRICTION_TORQUE_P95, VISCOUS_FRICTION_STATE, CURRENT_WINDOW_P95]
+  n_traj: 60
+  horizon_scale: 1.0            # 三者共用 3.0 年 horizon (§11: 唯一差异是判据)
+
+  # ---- §9: 窗级 persistence (三个变体完全相同) ----
+  # 禁止 single-sample failure。窗长取 48 个退化样本 = 48 × 1800 s = 24 h,
+  # 覆盖 ≈15 个 LEO 轨道周期 (5700 s), 故一窗内必然横跨全部姿态相位, 不会被
+  # 单次机动尖峰支配。persistence 沿用 wheel.yaml 已冻结的 4 (§9: 有则沿用)。
+  window_samples: 48
+  persistence_windows: 4
+  window_quantile: 0.95
+
+  spec:
+    # ---------- F2 (优先级最高) ----------
+    FRICTION_TORQUE_P95:
+      statistic: friction_torque_q95      # q95( b(t)·|omega(t)| + Tc )
+      # 阈值 T_f_fail = eta_margin · u_max。
+      # eta_margin 由**已冻结产物**推导, 不是手填数字 (§7 禁止事后抹):
+      #   eta_margin = 1 - torque_util_ref_p95
+      # 即"控制指令在 p95 口径下用掉 torque_util_ref 份额后, 电机还剩多少额定力矩
+      # 可以被摩擦吃掉"。这正是 §7 优先推荐的 available wheel torque margin。
+      # torque_util_ref_p95 由 B1.1 冻结口径在冻结 profiles.h5 上算出, 不可调。
+      threshold_rule: eta_margin_times_umax
+      eta_margin_rule: one_minus_torque_util_ref_p95
+      threshold_confidence: DERIVED
+    # ---------- F3 ----------
+    VISCOUS_FRICTION_STATE:
+      statistic: viscous_state_b_true     # b_true(t) (仿真真值, 仅作 label)
+      # b_fail = available_viscous_torque / omega_reference
+      #   available_viscous_torque = eta_margin·u_max - Tc_nom
+      #   omega_reference          = speed_util_ref_p95 · Omega_rated
+      # omega_reference 来自 Basilisk profile 健康工况分布 (§7 明令), 不由结果选择。
+      threshold_rule: available_viscous_torque_over_omega_reference
+      threshold_confidence: DERIVED
+    # ---------- F1 (仅在电气 provenance 足够时 eligible) ----------
+    CURRENT_WINDOW_P95:
+      statistic: current_q95              # q95(|I_m|) 逐窗
+      # Im_limit 必须来自 provenance。本阶段沿用 wheel.yaml 的 Im_rated_A,
+      # 但若 §4 判为 PROVENANCE_INSUFFICIENT, 该 candidate 直接 ineligible
+      # (§5: 不许另编一个电流值)。
+      threshold_rule: im_rated_from_provenance
+      threshold_confidence: PROVENANCE_PENDING
+      requires_electrical_provenance: true
+
+# ---------- §12: candidate Gate (12 条, 全部满足才 eligible) ----------
+gate:
+  failure_fraction_min: 0.35
+  failure_fraction_max: 0.80
+  censored_fraction_min: 0.15
+  min_event_observed: 20
+  early_eol_horizon_frac: 0.10
+  early_eol_frac_max: 0.30
+  late_eol_horizon_frac: 0.90
+  late_eol_frac_max: 0.40
+  eol_iqr_min: 1.0
+  temperature_min_K: 200.0
+  temperature_max_K: 400.0
+  current_absmax_A: 50.0
+  wear_ordering_min_spearman: 0.0
+  # Gate 11: EOL 处退化项占比中位数下限。
+  # 判据 = |I_visc| / (|I_cmd| + |I_coul| + |I_visc| + eps); 因三项同除 Kt,
+  # 该比值与力矩域 b|ω|/(|T_cmd|+Tc+b|ω|) **恒等**, 故对 F1/F2/F3 用同一定义,
+  # 不需要 §12 的 "degradation_state_progress" 变体 (理由写入 protocol.md)。
+  degradation_fraction_at_eol_median_min: 0.50
+  # Gate 12: 初始健康窗不得大面积触发失效条件。
+  # 统计口径: 全部轨迹的健康段窗**汇总**后, 达到该 candidate 阈值的窗占比。
+  healthy_frac: 0.05                 # 必须等于 sim.hi.healthy_frac (测试钉死)
+  healthy_trigger_frac_max: 0.05
+
+# ---------- §18: 150 条正式数据集 Gate ----------
+data_gate:
+  min_event_observed_traj: 40
+  min_censored_traj: 20
+  failure_fraction_min: 0.35
+  failure_fraction_max: 0.80
+  early_eol_frac_max: 0.30
+  late_eol_frac_max: 0.40
+  eol_iqr_min: 1.0
+  hi_p95_min: 0.80
+
+# ---------- §17: Feature Gate ----------
+feature_gate:
+  hi_p95_min: 0.80
+  b_hat_p95_rel_err_max: 0.10
+
+# ---------- 下一阶段 split 建议 (只写文档, B1.2 不执行) ----------
+next_split:
+  train_frac: 0.30
+  val_frac: 0.20
+  test_frac: 0.50
+  stratify: [event_observed, censored]
+  level: trajectory
+
+# ---------- B1.2 隔离路径 (§0: 绝不覆盖 v1 / b1 / b11) ----------
+paths:
+  profile_h5: data/mission_profile/basilisk_v1/profiles.h5
+  sim_dir: data/sim/wheel_basilisk_b12
+  candidate_dir: data/sim/wheel_basilisk_b12/candidates
+  feature_h5: data/features/wheel/basilisk_b12/target_features.h5
+  ckpt_dir: checkpoints/basilisk_b12
+  doc_dir: docs/basilisk_b12
+
+transfer:
+  # 仅为路径一致性记录; B1.2 §22 明确不训练任何 RUL 模型
+  target_feature_path: data/features/wheel/basilisk_b12/target_features.h5

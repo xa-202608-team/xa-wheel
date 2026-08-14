@@ -1,0 +1,6 @@
+schema_version: 1.1.0
+component: wheel
+mappings:
+  - {local: data, payload: 04_数据/wheel, role: dataset}
+  - {local: checkpoints, payload: 03_代码/components/wheel/release/checkpoints, role: checkpoint}
+  - {local: results/reference, payload: 05_结果/reference/wheel, role: reference_result}

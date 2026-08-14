@@ -1,0 +1,218 @@
+# configs/wheel_basilisk_b13.yaml
+#
+# Basilisk-B1.3 —— Torque-Domain Consistent Degradation Calibration
+# (力矩域一致的退化尺度映射)
+#
+# --------------------------------------------------------------------------
+# 本阶段只解决一件事
+# --------------------------------------------------------------------------
+# B1.2 已证明: F2 FRICTION_TORQUE_P95 是唯一物理合理的失效定义 (不依赖 Im_rated,
+# Gate 4-12 中除事件数外全过, healthy false trigger = 0, deg@EOL median = 0.9424),
+# 但它 ff = 0.1167 / n_event = 7 —— 因为退化尺度来自**电气**摩擦预算
+# Kt_nom·Im_rated − Tc_nom = 0.03625 N·m, 而 F2 阈值是**力矩域**的 0.14311463 N·m。
+#
+# B1.3 = 把退化状态的尺度映射到 F2 的力矩域, 使
+#     q(t) = b(t) / b_fail
+# 这个**归一化退化状态**在参考工况下与旧 analytic 设计逐点一致。
+#
+# --------------------------------------------------------------------------
+# 铁律 (goal §禁止 / §5 / §8)
+# --------------------------------------------------------------------------
+# * 不改 F2 threshold; 不用 failure fraction 反推参数; 不改 Im_rated / HR16 /
+#   Basilisk profile / g_duty / mode weights; 不改 RUL 模型; 不看 RUL RMSE;
+#   不跑 transfer / S6。
+# * **绝不硬编码 3.95, 也不硬编码 0.143115/0.03625。** 映射必须走
+#   normalized degradation state q(t) = b(t)/b_fail, 参数由代数推导唯一确定。
+# * 单一 candidate TQ1_TORQUE_NORMALIZED_MAPPING, 不设 A/B/C。
+# 全部由 tests/basilisk_b13 的 AST / 数值测试钉死。
+
+base_config: configs/wheel_basilisk.yaml
+
+# 沿用 B1/B1.1/B1.2 的统一 seed —— CRN 必须延续 (§9):
+# paired_trajectory_hash 必须仍为 ff1de559...
+seed: 20260809
+
+# ---------- HR16 额定值 (禁止改动, 与 B1/B1.1/B1.2 逐值相同) ----------
+rated:
+  source: basilisk_rwFactory_Honeywell_HR16
+  omega_rated_rad_s: 628.3185307179587
+  torque_rated_Nm: 0.2
+  rotor_inertia_Js_kgm2: 0.07957747154594767
+  rotor_mass_kg: 9.0
+  u_s_Nm: 2.8e-06
+  u_d_Nm: 7.7e-07
+  tol_rel: 1.0e-09
+
+# ---------- 参考口径 / wear drive: 完全沿用 B1.1-B1.2 冻结值 (禁止改) ----------
+# 与 configs/wheel_basilisk_b12.yaml 逐键相同, 由 test_no_outcome_tuning 比对。
+reference:
+  caliber: p95
+  speed_stat: omega_p95
+  torque_stat: torque_p95
+  speed_stat_rms: omega_rms
+  torque_stat_rms: torque_rms
+  aggregate: non_overlapping_windows_equal_weight_per_mode
+
+wear_drive:
+  reference: all_mode_ensemble_mean
+  speed_util_weight: 0.40
+  torque_util_weight: 0.40
+  zero_crossing_weight: 0.10
+  maneuver_weight: 0.10
+  speed_util_exponent: 2.0
+  torque_util_exponent: 1.0
+  ref_floor: 1.0e-04
+  g_duty_max: 20.0
+
+# ---------- §2: 冻结的失效定义 (来自 B1.2, 本阶段禁止改动) ----------
+failure_definition:
+  name: F2_FRICTION_TORQUE_P95
+  statistic: friction_torque_q95          # q95( b(t)·|omega_cmd(t)| + Tc )
+  # 该阈值是 B1.2 §7 冻结产物 T_f_fail = (1 − torque_util_ref_p95) · u_max。
+  # B1.3 只**读取并复验**, 绝不重新推导、绝不修改 (test_f2_threshold_frozen)。
+  threshold_Nm: 0.14311462970213382
+  window_samples: 48
+  window_quantile: 0.95
+  persistence_windows: 4
+  eol_rule: window_level_persistence
+  single_sample_failure_allowed: false
+  # F2 不依赖任何电气参数 —— 这是它相对 F1 的核心优势
+  depends_on_im_rated: false
+  # B1.2 冻结的推导输入 (只读复验用)
+  provenance:
+    eta_margin: 0.715573148510669
+    torque_util_ref_p95: 0.284426851489331
+    u_max_Nm: 0.2
+    b12_protocol_sha256: f7f9570c86ec2d80d99040c417a49a6d9ab1a0ea0f53faf70f0c62beaffa4c23
+
+# ---------- §4: F2 力矩域 b_fail (由冻结量代数推导, 不含 Im_rated) ----------
+degradation_scaling:
+  candidate: TQ1_TORQUE_NORMALIZED_MAPPING     # §8: 唯一 candidate, 无 A/B/C
+  # b_fail_f2 = (T_f_fail − Tc_nom) / omega_ref
+  #   omega_ref = speed_util_ref_p95 · Omega_rated
+  # 三个输入全部是已冻结量; Im_rated 不出现 (test_no_im_rated_in_failure_definition)。
+  b_fail_rule: available_viscous_torque_over_omega_ref
+  omega_ref_rule: speed_util_ref_p95_times_omega_rated
+  speed_util_ref_p95: 0.4041898280945392       # B1.1 冻结值, 只读复验
+  # 旧 analytic 设计的 b_fail (§6): 由 configs/wheel.yaml 的 sim.failure 复算,
+  # **只读旧的退化参数分布与方程, 不读任何 test RMSE / transfer 结果**。
+  old_b_fail_rule: electrical_budget_over_omega_ref_design
+  # 归一化退化状态 q = b / b_fail —— §5 明令: 映射必须建立在 q 上
+  normalized_state_symbol: q
+  # §7: 参数映射由 §3 审计出的实际方程逐项推导。b(t)=b0·(1+Δ·(1−exp(−integ/τ)))
+  # 中 b0 是纯乘性前因子 -> 只有 b0 需要按 b_fail 比例缩放, Δ/τ 无量纲不变。
+  # 该判断由 audit_degradation_equation.py 从源码确认, 不得凭印象填写。
+  rescale_params: [b0]
+  invariant_params: [Delta, tau_years]
+  hardcoded_target: false
+  used_failure_fraction_for_calibration: false
+  used_rul_metric: false
+  used_model_metric: false
+
+# ---------- §9/§10: probe ----------
+probe:
+  n_traj: 60
+  horizon_scale: 1.0                  # 3.0 年, §14 禁止延长
+  expected_paired_trajectory_hash: ff1de559b2746dcb394c4de6d70bda4d96ca594d1b953f58a4fa390366f41cf6
+  runs_allowed: 1                     # §10: 只跑一次, 禁止按结果改 scaling 再跑
+
+# ---------- §11/§12: 14 条 probe Gate ----------
+gate:
+  # Gate 1-12 沿用 B1.2 已冻结口径 (逐值相同, 由测试比对)
+  failure_fraction_min: 0.35
+  failure_fraction_max: 0.80
+  censored_fraction_min: 0.15
+  min_event_observed: 20
+  early_eol_horizon_frac: 0.10
+  early_eol_frac_max: 0.30
+  late_eol_horizon_frac: 0.90
+  late_eol_frac_max: 0.40
+  eol_iqr_min: 1.0
+  temperature_min_K: 200.0
+  temperature_max_K: 400.0
+  current_absmax_A: 50.0
+  wear_ordering_min_spearman: 0.0
+  degradation_fraction_at_eol_median_min: 0.50
+  healthy_frac: 0.05
+  # Gate 12 现在针对 **F2 friction torque threshold**, 不是 Im_rated (§11 明令)
+  healthy_trigger_frac_max: 0.05
+  healthy_trigger_statistic: friction_torque_q95
+
+  # ---- §12: B1.3 的两条核心 Gate ----
+  # Gate 13: 健康初始归一化状态 q0 = b0/b_fail_f2 必须与旧 analytic 冻结分布匹配
+  q0_median_rel_diff_max: 0.05
+  q0_p95_rel_diff_max: 0.10
+  # Gate 14: reference duty (g_duty ≡ 1) 下 q_new(t) 与 q_old(t) 逐点一致。
+  #
+  # 容差选择 (protocol 中先冻结, 依据 §3 审计的**实测**浮点行为):
+  #   b0 是纯乘性前因子, q(t) = (b0/b_fail)·shape(t) 中 b_fail 完全约掉,
+  #   故 q_new 与 q_old **代数恒等**。
+  #   但代数恒等 ≠ 浮点恒等: 实现上 (b0·s)·shape/(b_fail·s) 与 b0·shape/b_fail
+  #   的乘除顺序不同, 各自舍入。§3 实测 (n=2000, q∈[0.153,0.244]):
+  #       逐位相等 1202/2000, max_abs_diff = 5.551e-17 = 2.0 ULP
+  #   因此**不能**写 1e-12 那种"看起来严"的绝对值 —— q 的量级会随参数变化,
+  #   绝对容差不是不变量。改用**相对 ULP 口径**:
+  #       max_abs_diff <= q_ulp_tolerance_ulp * spacing(max|q_old|)
+  #   取 8 ULP (实测 2 ULP 的 4× 余量), 比 goal §12 的 1e-9 严约 7 个数量级
+  #   (8·spacing(0.25) ≈ 2.2e-16), 属"数学上应逐位相同 -> 要求更严"那一支。
+  q_trajectory_tolerance_mode: ulp
+  q_trajectory_tolerance_ulp: 8.0
+  # 双保险绝对上限: 即使 q 量级异常放大也不得超过此值 (仍远严于 §12 的 1e-9)
+  q_trajectory_max_abs_diff: 1.0e-12
+  q_trajectory_tolerance_rationale: >-
+    exact_algebraic_identity; float64 operation-order roundoff only;
+    measured 2.0 ULP in §3 audit (1202/2000 bitwise equal);
+    frozen at 8 ULP with 1e-12 absolute backstop
+
+# ---------- §15: 150 条正式数据集 Gate ----------
+data_gate:
+  failure_fraction_min: 0.35
+  failure_fraction_max: 0.80
+  censored_fraction_min: 0.15
+  min_event_observed_traj: 50
+  early_eol_frac_max: 0.30
+  late_eol_frac_max: 0.40
+  eol_iqr_min: 1.0
+  temperature_min_K: 200.0
+  temperature_max_K: 400.0
+  current_absmax_A: 50.0
+  wear_ordering_min_spearman: 0.0
+  require_b_true_monotonic: true
+  require_hash_reproducible: true
+
+# ---------- §17: Feature Gate ----------
+feature_gate:
+  hi_p95_min: 0.80
+  b_hat_p95_rel_err_max: 0.10
+  nan_count_max: 0
+  inf_count_max: 0
+
+# ---------- §16: 特征构建 ----------
+features:
+  # 核心 x_T (§16 明令), mission_features 一律不进 x_T
+  xt_cols: [I_m, omega, T, T_cmd, sigma_Im, b_hat_selfcal, dT, omega_err]
+  mission_features_in_xt: false
+  # 真值字段: 只能作为 label / 诊断, 绝不进 x_T (§17)
+  truth_fields: [b_true, Kt, Tc, b0, omega0]
+
+# ---------- 下一阶段 split 建议 (只写文档, B1.3 不执行) ----------
+next_split:
+  train_frac: 0.30
+  val_frac: 0.20
+  test_frac: 0.50
+  stratify: [event_observed, censored]
+  level: trajectory
+
+# ---------- B1.3 隔离路径 (§0: 绝不覆盖 v1 / b1 / b11 / b12) ----------
+paths:
+  profile_h5: data/mission_profile/basilisk_v1/profiles.h5
+  sim_dir: data/sim/wheel_basilisk_b13
+  probe_dir: data/sim/wheel_basilisk_b13/probe
+  final_dir: data/sim/wheel_basilisk_b13/final
+  feature_h5: data/features/wheel/basilisk_b13/target_features.h5
+  ckpt_dir: checkpoints/basilisk_b13
+  doc_dir: docs/basilisk_b13
+
+transfer:
+  # 仅为路径一致性记录; B1.3 §18 明确不训练任何 RUL 模型
+  target_feature_path: data/features/wheel/basilisk_b13/target_features.h5

@@ -1,0 +1,28 @@
+# 强制文本文件 LF 行尾 (防 Windows CRLF 进 Linux/Docker 容器报错;
+# release/CODE_MANIFEST.sha256 的哈希以 LF 字节为准, 行尾漂移会导致校验失败)
+*.sh   text eol=lf
+*.py   text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.json text eol=lf
+*.csv  text eol=lf
+*.ini  text eol=lf
+*.lock text eol=lf
+*.sha256 text eol=lf
+*.svg  text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+.dockerignore text eol=lf
+Dockerfile text eol=lf
+
+# 二进制不做行尾处理
+*.h5   binary
+*.hdf5 binary
+*.npz  binary
+*.pt   binary
+*.pth  binary
+*.pdf  binary
+*.png  binary
+*.jpg  binary

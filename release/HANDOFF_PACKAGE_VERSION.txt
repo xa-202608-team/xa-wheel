@@ -1,0 +1,39 @@
+HANDOFF_PACKAGE_ID   : LEO_Bearings_Docker_Handoff
+HANDOFF_PACKAGE_VER  : v1.0
+HANDOFF_BUILD_STAMP  : 2026-08-10T21:55:00+0800
+HANDOFF_STAGE        : B8-HANDOFF-FINAL
+RELEASE_VERSION      : XA-202608-wheel-basilisk-final
+
+STATUS               : B8_HANDOFF_READY
+FINAL_TRANSFER_CONCLUSION : NO_POSITIVE_TRANSFER_SUPPORTED
+ENGINEERING_RECOMMENDATION: damage_extrapolation
+
+冻结声明
+--------
+飞轮算法与实验线已冻结。后续只允许 Docker/环境/提交外裹层修改，
+不得再修改影响实验数字的代码。
+
+本包唯一性说明（§15）
+--------------------
+- release/ 下仅存在本交接包一份，未覆盖任何先前交接包。
+- 若师兄需要产出第二版，请新建 release/LEO_Bearings_Docker_Handoff_v1.1/
+  或带 timestamp 的同级目录，不要就地覆盖本目录。
+
+不含内容（§15 排除项，已扫描确认 0 命中）
+----------------------------------------
+.git/ | conda env / .venv / site-packages | __pycache__ / *.pyc
+CUDA cache (*.nv) | IDE state (.vscode/ .idea/) | 历史压缩包 (*.zip/*.rar/*.7z/*.tar.gz)
+
+data/ 只读约定（§9）
+-------------------
+data/ 在本包内为 READ ONLY。Docker 挂载推荐：
+    ./data:/workspace/data:ro
+不要 COPY 整个 data 树进 image（除非明确决定这么做）。
+
+入口文件
+--------
+HANDOFF_README.md                    交接主入口
+docs/handoff/DOCKER_CHECKLIST.md     Docker 封装 16 项清单
+RELEASE_TEST_SCOPE.txt               测试范围声明（必须先读）
+scripts/handoff/run_release_tests.py 唯一受支持的测试入口
+scripts/handoff/verify_manifest.py   完整性校验（468 项 SHA256）

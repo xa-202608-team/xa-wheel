@@ -1,0 +1,76 @@
+# configs/feature_transfer.yaml
+#
+# P1-3 特征空间迁移对照实验 (5 seeds × 2 conditions)
+#
+# ############################################################################
+# 诚实对照: 把源域 (XJTU-SY 振动特征, 12 维) 上拟合的 clip + z-score 参数
+# 冻结后直接套到目标域 (Basilisk 遥测, 10 维), 与目标域原生 scaler 对比。
+#
+# 这不是主迁移路线 (主路线在 HI 动力学层, 见 B5)。本实验是 spec P1-3 要求的
+# 特征层"强对照": 如果连归一化参数都不能跨域共享 (源=振动, 目标=遥测),
+# 那就是 HI 层迁移必要性的直接证据。
+#
+# 正/负结果都接受 —— 这是诚实的对照。
+# ############################################################################
+base_config: configs/wheel_basilisk_b5.yaml
+
+# ---- 实验参数 ----
+feature_transfer:
+  label: FEATURE_SPACE_TRANSFER_CONTROL
+  formal_stage: false                  # 对照实验, 不产生正式迁移结论
+  exploratory_only: true
+  purpose: >-
+    固定 5 seeds × 同一 B2.1 冻结划分 × 同一模型配置, 对比 target_only 在
+    两种 z-score 归一化下的 RMSE。正/负结果都接受。
+
+  # ---- 固定 5 seeds (与 B5 正式 seed 一致) ----
+  seeds: [112, 113, 114, 115, 116]
+  seed_role: control_experiment_not_formal_transfer
+
+  # ---- 严格配对 ----
+  fairness:
+    same_split: true                   # B2.1 冻结划分 (23e2b944...)
+    same_model_config: true            # n_features=12 / n_target=10 (B5 §6.3)
+    same_training_hyper: true          # S2.5 冻结: max_epochs=8 patience=2 wd=1e-3
+    same_batch_order: true             # seed*1000+7 (B5 §6.1)
+    same_optimizer: true               # Adam(lr=finetune_lr, wd=weight_decay)
+    same_early_stop_metric: true       # info_macro_rmse
+    # 唯一差异
+    allowed_differences:
+      native_scaler: target_train_mean_std
+      source_scaler: source_train_mean_std_frozen
+
+  # ---- 条件定义 ----
+  conditions:
+    native_scaler:
+      description: "目标域 train 行 mean/std (B2/B5 标准口径)"
+      scaler_source: target_domain_train
+      normalization: zscore
+    source_scaler:
+      description: "源域 XJTU-SY train 行 mean/std, 冻结后套到目标域"
+      scaler_source: source_domain_train
+      normalization: clip_then_zscore
+      clip_percentiles: [1, 99]
+      feature_alignment: positional_min_F_src_F_tgt  # 朴素逐列对齐 (10 列)
+
+  # ---- bootstrap 纪律 (与 B5 §10 一致) ----
+  bootstrap:
+    unit: seed_level_paired_delta
+    n: 5
+    samples: 5000
+    seed: 20260814
+    forbid_endpoint_bootstrap: true
+
+  # ---- 输出 ----
+  output_json: feature_transfer_paired.json
+  output_dir: reference/wheel/
+
+  # ---- 解释约束 ----
+  interpretation:
+    positive_delta_means: "source_scaler 更好 (Δ = native - source > 0)"
+    negative_delta_means: "source_scaler 更差 (Δ < 0; 源域归一化不适用目标域)"
+    ci_crosses_zero_means: "差异不显著"
+    forbid_conclusion: >-
+      本实验**不是**正式迁移实验; 正迁移结论只能由 B5 正式评估给出。
+      本实验的负面结果 (源域 scaler 在目标域更差) 只用于说明
+      HI 层迁移 (而非特征层迁移) 的必要性。

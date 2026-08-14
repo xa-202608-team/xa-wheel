@@ -1,0 +1,151 @@
+# configs/wheel_basilisk_b4x.yaml
+#
+# BASILISK-B4X —— Transfer Diagnostic (POST_B2_FAIL_EXPLORATORY)
+#
+# ############################################################################
+# 这不是正式 B4。B2 的判定 `B2_GENERALIZATION_FAIL` 保持终局, 本阶段不覆盖、
+# 不重新解释、不改写它。本阶段只回答一个诊断问题:
+#
+#   Q2: source_finetune / source_mmd 是只是比不稳定的 Target-only 更稳,
+#       还是确实提供了跨域增益?
+#
+# 禁止事项 (与 B2 完全一致的冻结面):
+#   split / train-val-test IDs / early stopping / max_epochs / weight_decay /
+#   loss weights / HI / RUL / censoring contract / mission profile /
+#   source checkpoint / MMD lambda —— 一律不得修改。
+#   不添加新的迁移方法, 只跑 §11 的三组。
+#
+# 输出标签只允许 B4X_TRANSFER_STABILIZATION_SIGNAL /
+# B4X_GENERIC_TRANSFER_SIGNAL / B4X_NO_TRANSFER_SIGNAL, 三者都必须同时写
+# EXPLORATORY_ONLY / B2_GENERALIZATION_FAIL_REMAINS_FINAL /
+# NOT_FORMAL_TRANSFER_EVIDENCE。
+#
+# §18 表述纪律: 即使 target_only 远差于 source_mmd, 也不得写"迁移显著有效"。
+# 必须先判断是不是 target_only 在外推区崩溃、source 模型只是更保守。这种情况
+# 只能写成 "source initialization regularizes extrapolation under the known
+# B2 distribution gap", 而不是 positive transfer proven。
+# ############################################################################
+base_config: configs/wheel_basilisk_b2.yaml
+
+paths:
+  # 只读输入: B1.9 feature + B2 冻结划分 + B3X 的输入 schema 决定
+  b19_feature_h5: data/features/wheel/basilisk_b19/target_features.h5
+  b2_split_json: checkpoints/basilisk_b2/split.json
+  b2_metrics_json: checkpoints/basilisk_b2/metrics.json
+  b2_status: STATUS_BASILISK_B2.md
+  b3x_summary_json: checkpoints/basilisk_b3x/summary.json
+  source_checkpoint: checkpoints/source_tcn_pretrain.pt
+  # B4X 自己的输出
+  ckpt_dir: checkpoints/basilisk_b4x
+  doc_dir: docs/basilisk_b4x
+  metrics_json: checkpoints/basilisk_b4x/transfer_metrics.json
+  stability_json: checkpoints/basilisk_b4x/transfer_stability.json
+  summary_json: checkpoints/basilisk_b4x/summary.json
+
+protocol:
+  path: docs/basilisk_b4x/protocol.md
+  hash_path: checkpoints/basilisk_b4x/protocol_hash.json
+
+b4x:
+  label: POST_B2_FAIL_EXPLORATORY
+  formal_stage: false
+
+  # ---------- §12 继续用同一 B2 划分 ----------
+  split:
+    reuse_from: checkpoints/basilisk_b2/split.json
+    forbid_restratify: true
+    expected_sha256:
+      079296e5fba206da6ba9dab1078a8eaa6957e37ea97d0782b7a3fa01164113ae
+
+  # ---------- §10 输入 schema 由 B3X verdict 决定 ----------
+  # 规则在 B3X 出数之前已写入 docs/basilisk_b3x/protocol.md §9。
+  # 本阶段只**读取** B3X summary 的 b4x_input_schema 字段并核对该规则,
+  # 不允许按哪个结果好看来挑。
+  input_schema:
+    decided_by: checkpoints/basilisk_b3x/summary.json::b4x_input_schema
+    rule:
+      B3X_STABILIZING_SIGNAL: core_plus_mission
+      B3X_NO_STABILIZING_SIGNAL: core_only
+    # 三组必须共用同一份目标域输入
+    shared_across_groups: true
+
+  # ---------- §11 三组, 不添加新迁移方法 ----------
+  groups: [target_only, source_finetune, source_mmd_finetune]
+  forbid_new_transfer_methods: true
+  # source 侧固定件 (§0 禁止修改)
+  source:
+    checkpoint: checkpoints/source_tcn_pretrain.pt
+    n_features: 12          # checkpoint metadata; 三组共用同一架构宽度
+    latent_dim: 64
+    L: 64
+    mmd_lambda_from: transfer.mmd_lambda    # 不在本阶段改动
+  # 三组共用同一架构 (n_features=12 的 adapter 输入宽度), 因此本阶段的
+  # target_only 是**重跑**, 不是 B2 的数字。必须显式记录, 不得默默比较。
+  architecture_note: shared_source_sized_adapter_target_only_is_rerun
+
+  # ---------- §13 两套 seed, 分开报告 ----------
+  seeds:
+    new: [92, 93, 94]        # 看新的随机稳定性
+    replay: [72, 74, 76]     # B2 崩塌条件下迁移是否稳定
+  forbid_merging_seed_sets: true   # 不得合并成一个 6-seed 平均/显著性数字
+
+  # ---------- §14 分层诊断 ----------
+  short_eol_subset: [19, 109, 111]
+  subset_metrics: [macro_rmse, mae, pred_mean, pred_std, true_std, psr,
+                   warning_miss]
+  overall_metrics: [info_macro_rmse, info_pooled_rmse, macro_corr, psr,
+                    warning_coverage, warning_miss, ph, alpha_lambda]
+
+  # ---------- §16 catastrophic_error_rate (纯诊断) ----------
+  catastrophic:
+    # threshold = multiplier x median trajectory RMSE of target_only **validation**
+    # 绝不使用 test 分布来选阈值。
+    multiplier: 2.0
+    threshold_source: target_only_validation_median_trajectory_rmse
+    forbid_test_derived_threshold: true
+    definition: trajectory_rmse_gt_multiplier_times_val_median
+
+  # ---------- §15 gain 定义 ----------
+  gains:
+    gain_ft: target_only_minus_source_finetune
+    gain_mmd: target_only_minus_source_mmd_finetune
+    subsets: [overall, short_eol, normal_eol]
+
+  # ---------- §17 三个允许的标签 ----------
+  verdict:
+    allowed_labels:
+      - B4X_TRANSFER_STABILIZATION_SIGNAL
+      - B4X_GENERIC_TRANSFER_SIGNAL
+      - B4X_NO_TRANSFER_SIGNAL
+    mandatory_qualifiers:
+      - EXPLORATORY_ONLY
+      - B2_GENERALIZATION_FAIL_REMAINS_FINAL
+      - NOT_FORMAL_TRANSFER_EVIDENCE
+    # A: replay seeds 中 >= 2/3 显著降低 catastrophic_error_rate
+    #    + short-EOL RMSE 改善 + overall mean gain > 0
+    #    + normal-EOL 没有明显系统性变差
+    stabilization:
+      min_replay_seeds_catastrophic_reduced: 2
+      require_short_eol_improved: true
+      require_overall_mean_gain_positive: true
+      # "没有明显系统性变差": normal-EOL 平均相对恶化不超过 5%
+      normal_eol_max_rel_degradation: 0.05
+    # B: 除 A 之外, 新 seeds >= 2/3 gain>0 + normal-EOL 也改善
+    #    + corr / warning 不恶化
+    generic:
+      min_new_seeds_gain_positive: 2
+      require_normal_eol_improved: true
+      require_corr_not_worse: true
+      require_warning_not_worse: true
+      corr_worse_tol: 0.02
+      warning_miss_worse_tol: 0.02
+    # §18: 任何 source 优势都必须先做"是否只是 target_only 崩溃"的判断
+    require_collapse_attribution: true
+    forbid_positive_transfer_claim: true
+
+  # 描述性 CI: 每套 seed 内部各自算, 单位 = 一个 seed 一个配对差值
+  descriptive_ci:
+    bootstrap_samples: 2000
+    bootstrap_seed: 20260812
+    unit: one_paired_difference_per_seed
+    forbid_pooling_seed_sets: true

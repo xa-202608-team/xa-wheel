@@ -1,0 +1,397 @@
+# configs/wheel_basilisk_b6.yaml
+#
+# BASILISK-B6 —— Failure-Label Scarcity Formal Matrix + Final Transfer Conclusion
+#
+# ############################################################################
+# 这是飞轮线**最后一个允许产生新的核心实验数字**的阶段。
+#
+# §0 前置冻结事实 (只读, 不得覆盖、不得重新解释):
+#   * B1.8 / B1.9 数据与特征已冻结
+#   * B2_GENERALIZATION_FAIL 在其自身划分上保持终局
+#   * B3X_NO_STABILIZING_SIGNAL  -> 正式输入 schema 固定 CORE_ONLY
+#   * B4X_TRANSFER_STABILIZATION_SIGNAL 仍然只是 EXPLORATORY_ONLY
+#   * B21_GENERALIZATION_PASS, split_sha256 = 23e2b944...5c932
+#   * **B5_NO_POSITIVE_TRANSFER 是终局**: 全量目标域下不存在正转移。
+#     B5 的结论不得因 B6 被覆盖。即使某个低标签档出现正增益, 那也只能构成
+#     "conditional low-label transfer benefit", **绝不是 overall positive transfer**。
+#
+# §1 唯一的科学问题: 当目标域只有少量完整失效轨迹可用于训练时, source 预训练
+#    是否比 Target-only 更有价值? 被削减的是 **event-observed failure-labelled
+#    trajectories**, 不是目标域轨迹总量 —— 真实航天约束是失效标签稀缺, 而退化 /
+#    未失效运行数据仍可大量存在。
+#
+# §10 B6 是收口, 不是扩方法: 不得加入 Wiener PF / rate model / 新迁移方法 /
+#     新 MMD lambda / mission feature arm。
+# §26 B6 完成即停。不自动跑 B7, 不自动跑 B8。
+# ############################################################################
+base_config: configs/wheel_basilisk_b5.yaml
+
+paths:
+  # ---- 只读输入 (B1.9 / B2.1 / B3X / B4X / B5) ----
+  b19_feature_h5: data/features/wheel/basilisk_b19/target_features.h5
+  b21_split_json: docs/basilisk_b21/split_manifest.json
+  b21_summary_json: checkpoints/basilisk_b21/summary.json
+  b3x_summary_json: checkpoints/basilisk_b3x/summary.json
+  b4x_summary_json: checkpoints/basilisk_b4x/summary.json
+  b5_protocol_hash: checkpoints/basilisk_b5/protocol_hash.json
+  b5_metrics_json: checkpoints/basilisk_b5/formal_metrics.json
+  b5_summary_json: checkpoints/basilisk_b5/summary.json
+  source_checkpoint: checkpoints/source_tcn_pretrain.pt
+  # ---- B6 自己的输出 (独立命名空间) ----
+  ckpt_dir: checkpoints/basilisk_b6
+  doc_dir: docs/basilisk_b6
+  subset_manifest_json: checkpoints/basilisk_b6/label_subset_manifest.json
+  metrics_json: checkpoints/basilisk_b6/all_metrics.json
+  raw_npz: checkpoints/basilisk_b6/all_raw.npz
+  paired_json: checkpoints/basilisk_b6/paired_statistics.json
+  lifetime_json: checkpoints/basilisk_b6/lifetime_bins.json
+  warning_json: checkpoints/basilisk_b6/warning_metrics.json
+  summary_json: checkpoints/basilisk_b6/summary.json
+  verdict_json: checkpoints/basilisk_b6/final_verdict.json
+
+protocol:
+  path: docs/basilisk_b6/protocol.md
+  hash_path: checkpoints/basilisk_b6/protocol_hash.json
+
+b6:
+  label: FAILURE_LABEL_SCARCITY_FORMAL_MATRIX
+  formal_stage: true
+  last_stage_allowed_to_produce_core_numbers: true
+
+  # ---------- §1 唯一科学问题 ----------
+  question: >-
+    当目标域只有少量完整失效轨迹 (event-observed failure labels) 可用于训练时,
+    source 预训练是否比 Target-only 更有价值?
+  scarcity_axis: event_observed_failure_labelled_trajectories
+  scarcity_axis_is_not: total_target_trajectories
+  scarcity_rationale: >-
+    真实航天约束是失效标签稀缺, 而退化 / 未失效运行数据仍可大量存在。
+    若把稀缺定义成 n_train 总量下降, 就会重新制造 B2 的 coverage mismatch,
+    那是在测另一个 (已知会失败的) 问题, 不是本阶段的问题。
+
+  # ---------- §0 前置冻结事实 ----------
+  frozen_facts:
+    b18_verdict: B18_SCENARIO_READY
+    b19_verdict: B19_FEATURE_READY
+    b2_verdict: B2_GENERALIZATION_FAIL
+    b2_verdict_status: B2_GENERALIZATION_FAIL_REMAINS_FINAL
+    b3x_verdict: B3X_NO_STABILIZING_SIGNAL
+    b4x_verdict: B4X_TRANSFER_STABILIZATION_SIGNAL
+    b4x_status: EXPLORATORY_ONLY
+    b21_verdict: B21_GENERALIZATION_PASS
+    b21_split_sha256:
+      23e2b94445e698eab263ca17a36d99f7130eb2e8c5c3b9b8d0bd9ba772e5c932
+    b5_verdict: B5_NO_POSITIVE_TRANSFER
+    b5_verdict_status: B5_NO_POSITIVE_TRANSFER_REMAINS_FINAL
+    b5_target_only_mean_info_macro_rmse: 0.241024
+    b5_source_finetune_mean_info_macro_rmse: 0.242659
+    b5_source_mmd_finetune_mean_info_macro_rmse: 0.241607
+    b5_damage_extrapolation_mean_info_macro_rmse: 0.054312
+    b5_gain_ft_mean: -0.001635
+    b5_gain_mmd_mean: -0.000583
+    b5_gain_ft_improve_count: 1
+    b5_gain_mmd_improve_count: 2
+    b5_engineering_recommendation: damage_extrapolation
+    b5_must_not_be_overwritten: true
+    forbid_retune_any_model_or_transfer_hyperparam: true
+
+  # ---------- §2 禁改面 ----------
+  forbidden_changes: [b18, b19, b2, b21, b3x, b4x, b5, analytic_s25_to_s5b,
+                      source_checkpoints, model_architecture, mmd_lambda,
+                      optimizer, loss_weights, early_stopping, hi, rul,
+                      mission_profile, split]
+
+  # ---------- §4 输入 schema (沿用 B5) ----------
+  input_schema:
+    formal: CORE_ONLY
+    n_features: 12
+    reuse_from: configs/wheel_basilisk_b5.yaml
+    decided_by: checkpoints/basilisk_b3x/summary.json::verdict
+    rule:
+      B3X_STABILIZING_SIGNAL: core_plus_mission
+      B3X_NO_STABILIZING_SIGNAL: core_only
+    forbid_mission_features: true
+    forbid_restoring_mission_arm: true
+    forbid_reason: >-
+      不得因为 B3X 在某些 seed 上"看起来更好"就把 mission feature 偷偷带回 B6。
+      B3X 的正式判定是 NO_STABILIZING_SIGNAL, 这是终局。
+    forbidden_input_cols: [hi_damage_obs, hi_friction, hi_a, b_true, rul,
+                           rul_lower_bound, label_fail, eol_idx, D_true]
+
+  # ---------- §5 划分 (完全复用 B2.1) ----------
+  split:
+    reuse_from: docs/basilisk_b21/split_manifest.json
+    expected_sha256:
+      23e2b94445e698eab263ca17a36d99f7130eb2e8c5c3b9b8d0bd9ba772e5c932
+    forbid_restratify: true
+    require_b21_verdict: B21_GENERALIZATION_PASS
+    n_train: 45
+    n_train_event: 21
+    n_train_censored: 24
+    n_val: 31
+    n_test: 74
+    val_test_never_touched: true
+    invalid_label: B6_INVALID
+
+  # ---------- §6 失效标签稀缺的正式定义 ----------
+  label_scarcity:
+    axis: n_event_labeled
+    levels: [3, 5, 10, 21]
+    always_keep_all_censored_train: true
+    n_censored_train_always: 24
+    train_composition:
+      3: {event: 3, censored: 24, total: 27}
+      5: {event: 5, censored: 24, total: 29}
+      10: {event: 10, censored: 24, total: 34}
+      21: {event: 21, censored: 24, total: 45}
+    unselected_events: fully_removed_from_that_level_train
+    forbid_relabel_known_eol_as_censored: true
+    forbid_using_future_or_eol_info: true
+    forbid_smuggling_as_unlabelled_input: true
+    forbid_defining_scarcity_as_total_n_train: true
+    forbid_reason: >-
+      把稀缺定义成 n_train = 3/5/10 会重新制造 B2 的 coverage mismatch。
+      未被选中的 event 轨迹必须**完全**从该档 train 移除:
+      不得改标成 censored (那是伪造删失, 因为我们已知其真 EOL),
+      不得以任何 unlabelled input 形式塞回, 不得使用其未来 / EOL 信息。
+
+  # ---------- §7 子集选择 (coverage-aware, 训练前定死) ----------
+  subset_selection:
+    subset_seed: 20260814
+    bin_source: docs/basilisk_b21/split_manifest.json::lifetime_bins.event
+    bin_names: [short, medium, long]
+    bin_edges: [26846.0, 37395.0]
+    forbid_recompute_edges_from_b6_test: true
+    method: deterministic_shuffle_within_each_bin_then_take_first_k
+    coverage_aware: true
+    per_level_bin_quota:
+      3: {short: 1, medium: 1, long: 1}
+      5: {short: 2, medium: 1, long: 2}
+      10: {short: 3, medium: 3, long: 4}
+      21: {short: 7, medium: 7, long: 7}
+    must_be_fixed_before_any_training: true
+    manifest_path: checkpoints/basilisk_b6/label_subset_manifest.json
+    forbid_change_after_written: true
+
+  # ---------- §8 primary vs sensitivity ----------
+  primary:
+    n_event_labeled: 5
+    reason: >-
+      5 位于 3 与 10 之间, 且在看到任何 B6 结果之前就已固定 ——
+      避免"挑一个最好看的标签档"。
+    only_level_allowed_to_produce_formal_verdict: true
+  secondary:
+    levels: [3, 10, 21]
+    role: gain_vs_label_amount_trend_only
+    cannot_override_primary: true
+
+  # ---------- §9 全新正式 seeds ----------
+  seeds: [122, 123, 124, 125, 126]
+  forbid_reused_seeds: [72, 73, 74, 75, 76,
+                        92, 93, 94,
+                        102, 103, 104, 105, 106,
+                        112, 113, 114, 115, 116]
+  seed_role: formal_confirmatory_not_development
+
+  # ---------- §10 方法矩阵 ----------
+  trained_groups: [target_only, source_finetune, source_mmd_finetune]
+  eval_only_groups: [damage_extrapolation, const_mean_info]
+  forbid_new_transfer_methods: true
+  forbid_wiener_pf: true
+  forbid_rate_model: true
+  forbid_new_mmd_lambda: true
+  forbid_mission_feature_arm: true
+  closure_note: B6 是收口, 不是扩方法。
+
+  # ---------- §11 同档同 seed 内的严格配对 ----------
+  fairness:
+    same_train_ids: true
+    same_val_ids: true
+    same_test_ids: true
+    same_batch_order_signature: true
+    same_init_weight_signature: true
+    same_optimizer: true
+    same_training_budget: true
+    same_early_stopping: true
+    same_checkpoint_rule: true
+    same_censoring_loss: true
+    same_evaluator: true
+    allowed_differences:
+      source_finetune: source_initialization
+      source_mmd_finetune: source_initialization_plus_frozen_mmd
+    shared_n_features: 12
+    forbid_extra_epochs_for_failing_group: true
+
+  # ---------- §12 checkpoint 选择 ----------
+  checkpoint:
+    selection: validation_only
+    forbid_test_based_early_stopping: true
+    forbid_test_based_selection: true
+    forbid_retrain_after_seeing_test: true
+    forbid_rerun_failing_looking_seed: true
+    forbid_auto_retry: true
+    collapse_is_a_formal_result: true
+    invalid_cell_only_on_code_error_or_nan: true
+    forbid_seed_swap_on_invalid: true
+    record_per_group: [best_epoch, val_metric, checkpoint_sha256,
+                       batch_order_signature, init_weights_sha256]
+
+  # ---------- §13 主指标与 gain ----------
+  primary_metric: test_info_trajectory_macro_rmse
+  gains:
+    gain_ft: target_only_minus_source_finetune
+    gain_mmd: target_only_minus_source_mmd_finetune
+    positive_means: source_method_better
+
+  # ---------- §14 每档必报指标 ----------
+  report_metrics: [info_macro_rmse, info_pooled_rmse, full_macro_rmse, mae,
+                   macro_corr, psr, catastrophic_rate, warning_coverage,
+                   miss_rate, false_alarm_rate, ph, alpha_lambda, convergence]
+  report_lifetime_bins: [short, medium, long]
+  censored_discipline:
+    metrics_without_true_eol_stay_nan: true
+    forbid_nan_to_zero: true
+    require_n_evaluable: true
+
+  # ---------- §15 primary (n=5) 十条正式门槛 ----------
+  gate:
+    n_conditions: 10
+    all_required: true
+    require_mean_positive: true                   # 条件 1
+    require_median_positive: true                 # 条件 2
+    min_improve_count: 4                          # 条件 3 (>=4/5)
+    require_ci_lower_positive: true               # 条件 4
+    min_lifetime_bins_gain_nonneg: 2              # 条件 5 (3 段中 >=2 段 >=0)
+    n_lifetime_bins: 3
+    corr_tol: 0.02                                # 条件 6
+    require_catastrophic_not_worse: true          # 条件 7
+    warning_miss_tol: 0.05                        # 条件 8
+    require_fairness_pass: true                   # 条件 9
+    require_beat_const_mean_info: true            # 条件 10
+    forbid_lowering_bar: true
+    labels:
+      primary_pass: B6_PRIMARY_LOW_LABEL_POSITIVE_TRANSFER
+      primary_fail: B6_NO_PRIMARY_LOW_LABEL_POSITIVE_TRANSFER
+
+  # ---------- §16 secondary 不得推翻 primary ----------
+  secondary_signal:
+    allow_label: true
+    label_template: SECONDARY_LOW_LABEL_SIGNAL_AT_N{n}
+    mark_as: NOT_PRIMARY_CONFIRMATORY_EVIDENCE
+    cannot_override_primary: true
+    forbid_reason: >-
+      即使 n=3 的 MMD 以很大幅度 5/5 全胜, 只要 primary n=5 未通过,
+      最终正式判定仍然必须是 B6_NO_PRIMARY_LOW_LABEL_POSITIVE_TRANSFER。
+
+  # ---------- §10 paired bootstrap ----------
+  bootstrap:
+    unit: seed_level_paired_gain
+    n: 5
+    samples: 5000
+    seed: 20260814
+    forbid_endpoint_bootstrap: true
+    forbid_trajectory_count_significance: true
+    report: [mean, median, std, ci95, improve_count]
+
+  # ---------- §17 敏感性趋势 ----------
+  sensitivity:
+    x_axis: n_event_labeled
+    x_values: [3, 5, 10, 21]
+    y_axis: paired_gain
+    per_method: [source_finetune, source_mmd_finetune]
+    report: [mean, median, ci95, improve_count]
+    forbid_trend_line_fit: true
+    forbid_reason: >-
+      只有 4 个采样点。不得强行拟合趋势线, 只做描述性分析:
+      是否出现"标签越少增益越大"的迹象。
+
+  # ---------- §11/§12 catastrophic ----------
+  catastrophic:
+    multiplier: 2.0
+    threshold_source: target_only_validation_median_trajectory_rmse
+    forbid_test_derived_threshold: true
+    shared_threshold_across_groups_within_cell: true
+    per_level_threshold: true
+    per_level_reason: >-
+      每档有自己的 target_only (训练集不同), 阈值必须由该档自己的
+      target_only validation 分布定; 跨档共用阈值等于用别的档的尺子。
+
+  # ---------- §14 warning ----------
+  warning:
+    metrics: [warning_coverage, miss_rate, coverage_before_eol,
+              miss_rate_before_eol, false_alarm_rate, ph, alpha_lambda,
+              convergence]
+    forbid_hiding_miss_rate: true
+    forbid_nan_to_zero: true
+    require_n_evaluable: true
+
+  # ---------- §18 damage_extrapolation 必须进主表 ----------
+  damage_baseline:
+    keep_in_main_table: true
+    forbid_footnote_only: true
+    per_level_comparison: [target_minus_damage, ft_minus_damage,
+                           mmd_minus_damage]
+    mandatory_phrasing_when_damage_leads: >-
+      学习模型未超过基于已知累计损伤结构的物理外推基线。
+    forbid_hiding_because_theme_is_transfer_learning: true
+
+  # ---------- §19 工程推荐 ----------
+  engineering_recommendation:
+    single_recommendation: true
+    candidates: [target_only, source_finetune, source_mmd_finetune,
+                 damage_extrapolation]
+    excluded_oracle_methods: [const_mean_info, persistence, true_rul_lookup]
+    priority_order: [primary_test_info_macro_rmse, warning_miss,
+                     catastrophic_rate, simplicity_deployability]
+    priority_frozen: true
+    if_damage_still_first: damage_extrapolation
+
+  # ---------- §20 B5 / B6 关系 ----------
+  b5_b6_relationship:
+    b5_role: full_target_confirmatory_transfer_test
+    b5_conclusion_permanent: B5_NO_POSITIVE_TRANSFER
+    b6_role: failure_label_scarcity_stress_test
+    case_A:
+      condition: b5_negative_and_b6_primary_negative
+      final: NO_POSITIVE_TRANSFER_SUPPORTED
+    case_B:
+      condition: b5_negative_and_b6_n5_positive
+      final: >-
+        NO_GENERAL_POSITIVE_TRANSFER, CONDITIONAL_BENEFIT_UNDER_FAILURE_LABEL_SCARCITY
+    forbid_writing_case_B_as_overall_superiority: true
+    forbidden_phrasing: 迁移学习总体显著优于 Target-only
+
+  # ---------- §21 飞轮线最终迁移结论 ----------
+  final_conclusion:
+    path: docs/basilisk_b6/final_conclusion.md
+    allowed_values: [NO_POSITIVE_TRANSFER_SUPPORTED,
+                     CONDITIONAL_LOW_LABEL_TRANSFER_ONLY]
+    must_explain_separately: [b5_full_data_evidence, b6_low_label_evidence,
+                              lifetime_bin_behavior, warning_behavior,
+                              damage_baseline_comparison]
+
+  # ---------- §22 陈旧 B2.1 lifecycle guard ----------
+  stale_guard:
+    test_id: tests/basilisk_b21/test_b21_discipline.py::test_b21_b5_absent_and_never_auto_run
+    forbid_deleting_in_this_stage: true
+    forbid_editing_frozen_b21_test: true
+    allowed_failures_in_full_suite: 1
+    allowed_failure_kind: known_stale_lifecycle_guard
+    must_verify: [only_reason_is_authorized_b5_existence,
+                  not_an_algorithmic_error, not_a_hash_change]
+    doc: docs/basilisk_b6/stale_guard_retirement.md
+    doc_fields: [guard_purpose, authorization_transition, why_obsolete,
+                 replacement_guard]
+    retires_in_stage: B7_S8_CODE_FREEZE_GOVERNANCE
+    replacement_guard: b6_must_stay_absent
+
+  # ---------- §24/§26 出口 ----------
+  exit_rules:
+    stop_after_b6: true
+    forbid_auto_run_b7: true
+    forbid_auto_run_b8: true
+    forbid_new_algorithms: true
+    forbid_tuning_mmd: true
+    forbid_changing_split: true
+    forbid_changing_hi_rul: true
+    next_stage_allowed_only: ["B7: figures + report", "B8: packaging + Docker"]

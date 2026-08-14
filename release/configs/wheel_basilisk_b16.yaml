@@ -1,0 +1,164 @@
+# configs/wheel_basilisk_b16.yaml
+# BASILISK-B1.6 —— Documented Failure Wheel Selection Gate
+#
+# 本阶段是 **selection gate**: 只回答"是否存在一个有公开、可审计 DIRECT/DERIVED
+# 失效依据的反作用轮"。因此本文件**不含任何可调退化/仿真参数** ——
+# 没有 q0 / b0 / Delta / tau / horizon / Im_rated / wear law / threshold。
+# 若将来有人往此文件加这些键, 那已越出 B1.6 授权范围 (§13)。
+
+stage: BASILISK_B1.6
+purpose: >
+  在 Basilisk 运行时实际可用的 reaction wheel 模型 + 可访问的官方资料中,
+  寻找至少一个具有 COMPONENT_LIMIT 级别 DIRECT / DERIVED_FROM_DIRECT
+  失效阈值的轮型。只选择, 不建模, 不生成寿命数据。
+
+# ---------------------------------------------------------------------------
+# §5 provenance 四级 —— 只允许这四个标签
+# ---------------------------------------------------------------------------
+provenance_levels:
+  - DIRECT        # 官方 datasheet 或 Basilisk 官方器件定义直接给出
+  - DERIVED       # 仅由 DIRECT 数值 + 明确物理公式唯一计算得到
+  - ASSUMED       # 项目假设 / 经验参数 / 典型值
+  - UNAVAILABLE   # 找不到可靠值
+
+# DERIVED 的严格子类: 唯一由 DIRECT 推出 (§8 条件 3 认可)
+derived_from_direct_label: DERIVED_FROM_DIRECT
+
+# ---------------------------------------------------------------------------
+# §2 B —— 失效相关限值的四大类 (至少命中一类才可能 eligible)
+# ---------------------------------------------------------------------------
+failure_limit_categories:
+  mechanical:
+    - allowable drag torque
+    - allowable running torque
+    - bearing friction limit
+    - breakaway torque limit
+  thermal:
+    - max continuous temperature
+    - winding temperature limit
+    - bearing temperature limit
+  electrical:
+    - continuous current
+    - peak current with duration
+    - winding current limit
+  speed_momentum:
+    - overspeed trip
+    - momentum saturation
+    - speed limit tied to hardware protection
+
+# §7 失效模式优先级 (预先冻结, 不因结果改动)
+failure_mode_priority:
+  - mechanical_friction_bearing
+  - thermal
+  - electrical_continuous_limit
+  - overspeed_momentum
+  - control_saturation
+
+# ---------------------------------------------------------------------------
+# §2 C —— 失效定义必须是 COMPONENT_LIMIT; 以下形式一律不接受
+# ---------------------------------------------------------------------------
+failure_definition_required: COMPONENT_LIMIT
+failure_definition_forbidden:
+  - mission percentile
+  - dataset percentile
+  - 1 - duty
+  - model prediction
+  - failure fraction target
+  - arbitrary safety factor
+
+# ---------------------------------------------------------------------------
+# §9 provenance score 权重 (只用于对 eligible 候选排序)
+# ---------------------------------------------------------------------------
+score_weights:
+  direct_failure_threshold: 4
+  derived_from_direct: 3
+  direct_mechanical_threshold: 3
+  direct_thermal_threshold: 2
+  direct_electrical_threshold: 2
+  basilisk_builtin_preset: 2
+  public_official_datasheet: 2
+
+# ASSUMED 失效阈值 -> 候选直接 ineligible, 不因分数高而放行
+assumed_threshold_makes_ineligible: true
+
+# ---------------------------------------------------------------------------
+# §4 允许 / 禁止的资料来源
+# ---------------------------------------------------------------------------
+allowed_sources:
+  - vendor_official_datasheet
+  - nasa_esa_jpl_official_technical_document
+  - basilisk_official_source_or_docs
+forbidden_sources:
+  - blog
+  - csdn
+  - forum_or_qa_site
+  - unsourced_parameter_table
+  - aggregator_site
+
+# 本地检索范围 (§4)
+local_search_globs:
+  - "docs/**/*.md"
+  - "docs/**/*.json"
+  - "configs/*.yaml"
+  - "data/**/*.pdf"
+
+# 联网探测的官方 URL 白名单 —— 只探测, 不采纳二手来源
+official_url_probes:
+  - "http://www51.honeywell.com/aero/common/documents/Constellation_Series_Reaction_Wheels.pdf"
+  - "https://storage.googleapis.com/blue-canyon-tech-news/1/2019/10/BCT_DataSheet_Components_ReactionWheels_F2.pdf"
+  - "https://nanoavionics.com/cubesat-components/cubesat-reaction-wheels-control-system-satbus-4rw/"
+network_probe_timeout_s: 25
+
+# ---------------------------------------------------------------------------
+# §8 eligibility 判据 (逐条布尔, 全部为真才 B16_WHEEL_ELIGIBLE)
+# ---------------------------------------------------------------------------
+eligibility_conditions:
+  - c1_constructible_in_basilisk
+  - c2_speed_torque_momentum_auditable
+  - c3_has_component_limit_threshold_direct_or_derived_from_direct
+  - c4_threshold_is_not_mission_statistic
+  - c5_threshold_not_selected_by_failure_outcome
+  - c6_threshold_maps_to_explicit_physical_quantity
+  - c7_quantity_observable_or_computable_in_current_sim
+  - c8_no_hidden_truth_needed_via_x_T
+
+# §8 条件 6+7 的收紧项 (见 protocol.md §4.E, 冻结于查看 datasheet 结论之前):
+# 若某阈值在**零退化 BOL** 状态下已被触及, 它标记的是任务饱和而非器件退化,
+# 不得作为退化 EOL。该检查只使用 B1.6 入场时已冻结的 v1 profile, 不生成新数据。
+bol_attainment_check:
+  enabled: true
+  frozen_profile: data/mission_profile/basilisk_v1/profiles.h5
+  observable: wheel_speed_rad_s
+  rule: "attained_at_BOL == true  =>  threshold 不得作为退化 EOL"
+
+# ---------------------------------------------------------------------------
+# §10 freeze 选择顺序 (冻结; 不得用 failure fraction / expected RUL /
+#     data availability advantage 打破平局)
+# ---------------------------------------------------------------------------
+selection_order:
+  - mechanical_failure_threshold_available
+  - provenance_score_high
+  - basilisk_native_support
+  - minimal_model_change
+tiebreak_forbidden:
+  - failure_fraction
+  - expected_RUL
+  - data_availability_advantage
+
+# ---------------------------------------------------------------------------
+# §13 停止边界
+# ---------------------------------------------------------------------------
+stop_boundary:
+  generate_lifetime_dataset: false
+  run_rul: false
+  run_transfer: false
+  run_s6: false
+  modify_wear_law: false
+  modify_q0_delta_tau: false
+  design_new_thermal_model: false
+  design_new_electrical_model: false
+  mutable_groups: []
+
+verdicts:
+  - B16_DOCUMENTED_WHEEL_SELECTED
+  - B16_NO_DOCUMENTED_WHEEL

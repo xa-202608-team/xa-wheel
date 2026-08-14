@@ -1,0 +1,173 @@
+# ============================================================================
+# configs/wheel_basilisk.yaml
+# Basilisk-v1 —— 占空比驱动飞轮目标域仿真实验线 (与 configs/wheel.yaml 硬隔离)
+# ============================================================================
+# 本文件是 Basilisk-v1 的**唯一差异点配置**。它通过 base_config 继承
+# configs/wheel.yaml 的全部退化物理 / HI / 模型 / 评估口径, 只覆盖:
+#   (a) sim.profile.*        —— 新增的 Basilisk 工况源 (analytic 路径完全不受影响)
+#   (b) 所有输出路径          —— 全部落在 *_basilisk_v1 命名空间
+#
+# 铁律 (docs/basilisk_v1/plan.md §0):
+#   - Basilisk 只提供 omega(t) / motor torque(t) / mission mode
+#   - Basilisk 绝不接触 HI / failure threshold / EOL / RUL / 任何监督标签
+#   - 退化物理公式 (摩擦增长 / Arrhenius / 电流响应 / b_true) 一律沿用 wheel.yaml
+#   - 旧 analytic lineage 的 30 个冻结产物 byte 级不变 (baseline_contract.json)
+# ============================================================================
+
+# 继承基准配置。src/utils/config.load_config 之外由各 basilisk 脚本显式合并,
+# 保证"退化物理参数只有一份定义", 不会出现两套漂移的物理常数。
+base_config: configs/wheel.yaml
+
+seed: 20260808          # Basilisk-v1 主种子 (与 analytic lineage 的 42 不同, 避免混淆)
+
+sim:
+  # ---- 覆盖: 轨迹条数与输出路径 (退化物理 physics/disturbance/failure/hi 全部继承) ----
+  n_traj: 150
+  out_dir: data/sim/wheel_basilisk_v1
+
+  # ======================================================================
+  # 新增: 工况源 (§12 冻结; 看到 RUL 模型结果后不得修改)
+  # ======================================================================
+  profile:
+    # analytic = wheel.yaml 的解析正弦工况 (逐位保持原行为)
+    # basilisk  = 读下方 profiles.h5 的 Basilisk 工况库
+    source: basilisk
+    path: data/mission_profile/basilisk_v1/profiles.h5
+    modes: [cruise, nadir, imaging, desat, safe]
+
+    # ---- 工况库生成参数 (generate_profiles.py) ----
+    dt_s: 1.0                    # §11 铁律: Basilisk 必须 1 s 分辨率
+    run_duration_s: 7200.0       # 每条 run 2 h = 1.26 个 LEO 轨道周期 (>1 周期)
+    n_runs_per_mode: 3           # §4 要求每模式 >= 3 realizations
+    n_rw: 4                      # 3 正交 + 1 斜置 (官方 Honeywell_HR16)
+
+    # duty statistics 的阈值 (以电机额定力矩 u_max 为基准, 不硬编码绝对 N·m)
+    duty:
+      # |u| > maneuver_torque_frac · u_max 记为"处于机动"
+      maneuver_torque_frac: 0.02
+      # |u| > high_torque_frac · u_max 记为"高力矩"
+      high_torque_frac: 0.20
+      # Honeywell_HR16 官方 u_max = 0.2 N·m (由 rwFactory 给出, 此处冗余登记供审计)
+      u_max_Nm: 0.2
+
+    spacecraft:
+      mass_kg: 750.0
+      # 典型小型 LEO 通信卫星惯量 (kg·m^2), 行主序 3x3
+      I_hub: [900.0, 0.0, 0.0,
+              0.0, 800.0, 0.0,
+              0.0, 0.0, 600.0]
+      orbit:
+        sma_m: 6.9781e6          # ~600 km 高度 LEO (周期 ~5790 s, 对齐 leo_period_s)
+        ecc: 0.0001
+        inc_deg: 97.8            # 太阳同步倾角
+      rw:
+        max_momentum_Nms: 50.0
+        initial_speed_bias_rad_s: 200.0
+        initial_speed_spread_rad_s: 60.0
+
+    # ======================================================================
+    # 五模式参数 (§5: 机理/FSW 拓扑层面的差异, 禁止仅换正弦幅值)
+    # ======================================================================
+    mode_params:
+      # A. 巡航: 固定惯性指向, 低机动频率, 低控制力矩
+      cruise:
+        gains: {K: 1.0, P: 20.0}
+        disturbance_torque_Nm: 2.0e-5
+        segment_s: 600.0
+
+      # B. 对地: hillPoint 轨道坐标系指向 + Earth 引力 -> 参考姿态随轨道旋转,
+      #    轮速呈周期起伏 (中等变化)
+      nadir:
+        gains: {K: 2.0, P: 25.0}
+        disturbance_torque_Nm: 4.0e-5
+        segment_s: 600.0
+
+      # C. 成像: 参考姿态分段跳变 (slew) + 保持 (settle) -> 明显加减速与力矩峰
+      imaging:
+        gains: {K: 5.0, P: 30.0}
+        disturbance_torque_Nm: 2.0e-5
+        segment_s: 180.0
+        slew_amplitude_deg: [15.0, 45.0]
+        settle_segments: 2       # 每 (settle_segments+1) 段发起一次 slew
+      # D. 卸载: 单向常值扰动使轮动量线性积累; 周期性 dump 事件施加反向 body torque
+      #    (§5 允许 external torque abstraction, 不建磁力矩器硬件模型)
+      desat:
+        gains: {K: 2.0, P: 25.0}
+        disturbance_torque_Nm: 3.0e-5
+        segment_s: 300.0
+        secular_torque_Nm: 1.5e-3    # 长期单向扰动 (动量积累驱动源)
+        dump_every_segments: 6       # 每 6 段 (=1800 s) 触发一次卸载
+        dump_duration_segments: 2    # 卸载持续 2 段 (=600 s)
+        dump_torque_Nm: 6.0e-3       # 卸载期反向 body torque 幅值
+        dump_gain: 1.0               # 沿 -h_w 方向 (轮动量反方向) 施加
+
+      # E. 安全模式: 低控制带宽 (小 K / 大 P) + 更大扰动 + 不同指向
+      safe:
+        gains: {K: 0.3, P: 40.0}
+        disturbance_torque_Nm: 8.0e-5
+        segment_s: 900.0
+        safe_pointing_deg: 20.0
+
+    # ======================================================================
+    # §12 模式权重采样范围 (第一版经验登记; 冻结, 见到 RUL 结果后不得修改)
+    # ======================================================================
+    mode_weights_range:
+      cruise:  [0.20, 0.50]
+      nadir:   [0.15, 0.40]
+      imaging: [0.05, 0.25]
+      desat:   [0.02, 0.12]
+      safe:    [0.02, 0.15]
+    # 采样后归一化到和为 1 (由 tests/basilisk/test_bridge.py::test_mode_weights_sum_one 钉死)
+
+    # ======================================================================
+    # §10–§11 桥接: 1 s Basilisk 数据 -> 30 min 退化窗聚合
+    # ======================================================================
+    bridge:
+      # 每个退化窗 = sim.sample_period_s (=1800 s) / dt_s (=1 s) = 1800 个 Basilisk 点。
+      # 禁止在 30 min 点上瞬时采样 (§11): 那会丢掉机动与力矩峰值信息。
+      aggregate: window_mean      # 登记聚合口径名 (实现见 src/sim/basilisk_bridge.py)
+      # 从 profile library 抽片段时是否允许随机相位起点 (§10 要求可循环/随机 phase)
+      random_phase: true
+      # 单个任务段 (一个 mode 连续占用) 的长度, 单位 = 退化窗数
+      segment_windows: [8, 48]    # 4 h ~ 24 h 连续同模式
+      # 从哪一路轮取工况: 0..n_rw-1 单轮口径 (退化模型是单轮模型)
+      wheel_index: 0
+
+# ---------- Basilisk-v1 隔离命名空间的全部输出路径 ----------
+paths:
+  profile_h5: data/mission_profile/basilisk_v1/profiles.h5
+  duty_stats: data/mission_profile/basilisk_v1/duty_stats.json
+  provenance: data/mission_profile/basilisk_v1/provenance.json
+  sim_dir: data/sim/wheel_basilisk_v1
+  feature_h5: data/features/wheel/basilisk_v1/target_features.h5
+  ckpt_dir: checkpoints/basilisk_v1
+  doc_dir: docs/basilisk_v1
+
+# ---------- 覆盖: 迁移/特征读取路径指向 basilisk_v1 (§19 target-only smoke 用) ----------
+transfer:
+  target_feature_path: data/features/wheel/basilisk_v1/target_features.h5
+
+# ---------- §19 Target-only smoke ----------
+smoke:
+  seed: 72
+  group: target_only            # 只允许这一组; 禁止 source_finetune / mmd / rate
+  n_traj_smoke: 5               # §13 小样本 bridge smoke
+  n_traj_bridge_audit: 20       # §14 analytic vs basilisk 对种条数
+  labels: [BASILISK_SMOKE_ONLY, NOT_COMPARABLE_TO_FROZEN_RESULTS]
+
+# ---------- §8 五模式可区分性审计判据 ----------
+audit:
+  # 硬性要求 (任一不满足 -> BASILISK_PROFILE_FAIL, 不得继续生成寿命数据)
+  require_imaging_torque_above_cruise: true
+  require_desat_momentum_release: true
+  require_cruise_lowest_maneuver: true
+  # desat 卸载形态判据: 轮动量幅值序列必须存在 >= 此数量的显著下降段
+  desat_min_release_events: 2
+  # 显著下降的判据: 一次事件内 |h_w| 相对峰值下降比例
+  desat_release_drop_frac: 0.10
+  # 五模式在下列指标上必须有显著统计差异: 至少 min_distinct_metrics 项的
+  # 组间极差 / 组内典型散布 >= separation_ratio
+  distinct_metrics: [speed_rms, speed_p95, torque_rms, torque_p95,
+                     zero_crossings, maneuver_fraction]
+  min_distinct_metrics: 4
+  separation_ratio: 2.0

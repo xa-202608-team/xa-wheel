@@ -1,0 +1,136 @@
+# configs/wheel_basilisk_b3x.yaml
+#
+# BASILISK-B3X —— Mission Feature Ablation (POST_B2_FAIL_EXPLORATORY)
+#
+# ############################################################################
+# 这不是正式 B3。B2 的判定 `B2_GENERALIZATION_FAIL` 保持终局, 本阶段不覆盖、
+# 不重新解释、不改写它。本阶段只回答一个诊断问题:
+#
+#   Q1: Basilisk mission features 是否能缓解 B2 在短寿命轨迹上的失控?
+#
+# 禁止事项 (与 B2 完全一致的冻结面):
+#   split / train-val-test IDs / architecture / early stopping / max_epochs /
+#   weight_decay / loss weights / HI / RUL / censoring contract / mission
+#   profile / source checkpoint / MMD lambda —— 一律不得修改。
+#   唯一允许的差异是 **输入特征列**。
+#
+# 输出标签只允许 B3X_STABILIZING_SIGNAL / B3X_NO_STABILIZING_SIGNAL,
+# 且必须带 POST_B2_FAIL_EXPLORATORY。正式标签 B3_MISSION_FEATURES_USEFUL
+# 在本阶段禁止产生。
+# ############################################################################
+base_config: configs/wheel_basilisk_b2.yaml
+
+paths:
+  # 只读输入: B1.9 feature + B2 冻结划分 (原地复用, 不复制不重算)
+  b19_feature_h5: data/features/wheel/basilisk_b19/target_features.h5
+  b2_split_json: checkpoints/basilisk_b2/split.json
+  b2_metrics_json: checkpoints/basilisk_b2/metrics.json
+  b2_status: STATUS_BASILISK_B2.md
+  # B3X 自己的输出
+  ckpt_dir: checkpoints/basilisk_b3x
+  doc_dir: docs/basilisk_b3x
+  metrics_json: checkpoints/basilisk_b3x/mission_ablation_metrics.json
+  short_eol_json: checkpoints/basilisk_b3x/short_eol_diagnostics.json
+  summary_json: checkpoints/basilisk_b3x/summary.json
+
+protocol:
+  path: docs/basilisk_b3x/protocol.md
+  hash_path: checkpoints/basilisk_b3x/protocol_hash.json
+
+b3x:
+  label: POST_B2_FAIL_EXPLORATORY
+  formal_stage: false
+
+  # ---------- §4 完全复用 B2 划分 ----------
+  split:
+    reuse_from: checkpoints/basilisk_b2/split.json
+    forbid_restratify: true
+    expected_sha256:
+      079296e5fba206da6ba9dab1078a8eaa6957e37ea97d0782b7a3fa01164113ae
+
+  # ---------- §5 与 B2 相同的 seeds (paired diagnostic) ----------
+  seeds: [72, 73, 74, 75, 76]
+  collapsed_seeds: [72, 74, 76]     # B2 中崩塌的 seed
+  normal_seeds: [73, 75]            # B2 中正常的 seed
+
+  # ---------- §3 两个输入臂 ----------
+  arms:
+    core_only:
+      # B2 冻结的 10 列, 逐字不变
+      mission_features: []
+    core_plus_mission:
+      # 只允许当前/历史窗口派生量。全部来自 h5 的 mission_features 组,
+      # 是**当前窗**的聚合统计 (prefix-safe: 第 k 点只用第 k 窗自身的统计)。
+      mission_features:
+        - omega_rms
+        - omega_p95
+        - torque_rms
+        - torque_p95
+        - zero_crossing_rate
+        - maneuver_fraction
+
+  # h5 里 zero_crossing_count 是计数, 协议要求的是 rate ->
+  # rate = count / n_per_window。n_per_window 由 B1.1 官方派生式确定。
+  zero_crossing_rate_from: zero_crossing_count
+  n_per_window: 1800
+
+  # ---------- §3 禁止列 ----------
+  # 未来信息 / 寿命比例 / 标签派生量一律禁止。mode_id 也禁止:
+  # 它是模式标签本身, 单点看似"当前", 但它是 mission profile 的调度产物,
+  # 用它等于把工况调度表喂给模型。
+  forbidden_features:
+    - mode_id
+    - future_mode_schedule
+    - lifetime_mode_fraction
+    - future_mission_information
+    - eol_idx
+    - rul
+    - rul_lower_bound
+    - label_fail
+    - D_true
+    - b_true
+    - hi_damage_obs
+    - hi_friction
+    - hi_a
+
+  # ---------- §6 公平性: 两臂唯一差异是输入列 ----------
+  fairness:
+    same_split: true
+    same_batch_order: true
+    same_init_rng: true
+    same_optimizer: true
+    same_epochs: true
+    same_early_stopping: true
+    same_evaluation: true
+    same_censoring_contract: true
+    only_difference: input_features
+
+  # ---------- §7 分层诊断 ----------
+  short_eol_subset: [19, 109, 111]   # B2 中崩塌的 test 轨迹 (tid)
+  subset_metrics: [rmse, mae, corr, pred_std, true_std, psr, warning_miss]
+
+  # ---------- §9 探索性分类阈值 ----------
+  verdict:
+    min_short_eol_improved_seeds: 3    # short-EOL 明显改善的 seed 数 >= 3/5
+    min_collapsed_recovered: 2         # 崩塌 seed 中恢复 >= 2/3
+    require_overall_mean_gain_positive: true
+    require_warning_miss_not_worse: true
+    # "明显改善"必须是数字, 不能是看到结果之后的主观判断。
+    # 定义: short-EOL 子集 macro RMSE 的相对下降 >= 10%。
+    short_eol_improve_min_rel: 0.10
+    # "恢复"的定义在 protocol 中冻结: 该 seed 的 overall info_macro_rmse
+    # 落回正常 seed 区间上界以内 (B2 正常 seed 的最差值 = seed 75)。
+    # 阈值取自 B2 既有事实, 在任何 B3X 数字存在之前写定。
+    recovered_threshold_from: b2_normal_seed_worst
+    recovered_threshold_value: 0.2646356195158311
+    # warning miss "不恶化"的容差: 允许 0.02 绝对抖动, 超过即判恶化。
+    warning_miss_worse_tol: 0.02
+    forbid_formal_label: true
+    allowed_labels: [B3X_STABILIZING_SIGNAL, B3X_NO_STABILIZING_SIGNAL]
+    forbidden_labels: [B3_MISSION_FEATURES_USEFUL]
+
+  # 描述性 CI: 5 个 seed 的配对差, 只作描述, 不作显著性断言
+  descriptive_ci:
+    bootstrap_samples: 2000
+    bootstrap_seed: 20260811
+    unit: one_paired_difference_per_seed
