@@ -17,6 +17,12 @@
 .dockerignore text eol=lf
 Dockerfile text eol=lf
 
+# 冻结证据字节链保护: release/** 为交付快照原样字节 (含原始 CRLF 行尾),
+# 不做任何换行归一化/转换 —— 行尾漂移会破坏 CODE_MANIFEST.sha256 与
+# B6/B7 冻结契约的逐字节校验。置于上面的扩展名规则之后以覆盖之。
+# 本仓库新增的根级文件仍按上方规则维持 LF。
+release/** -text
+
 # 二进制不做行尾处理
 *.h5   binary
 *.hdf5 binary
