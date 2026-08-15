@@ -1,0 +1,318 @@
+# configs/wheel_basilisk_b18.yaml
+#
+# Basilisk-B1.8 —— Assumption-Transparent Cumulative Damage Model
+# (显式工程假设的累计损伤退化模型)
+#
+# ============================================================================
+# 本阶段的性质 (人类明确授权, 见 docs/basilisk_b18/protocol.md §0)
+# ============================================================================
+# 采用 B1.7 的 R3 路径: **显式承认为工程假设模型**。
+#   - 不声称使用厂家直接机械/热失效阈值
+#   - 不把 mission statistic 包装成 hardware limit
+#   - 不再追求 DIRECT EOL provenance
+#   - 允许建立明确标注为 ASSUMED 的仿真退化模型
+#   - 后续技术报告只能称之为 simulation degradation scenario /
+#     engineering-assumption failure definition, **不能**称 manufacturer
+#     failure specification
+#
+# 唯一研究问题: 能否构建一个透明、可复现、物理方向正确的累计损伤仿真场景,
+# 供后续 RUL 算法研究使用。答案不是"这个阈值是不是厂家真实失效阈值" —— 那个
+# 答案已经由 B1.6/B1.7 明确给出: NO。
+#
+# ============================================================================
+# 铁律 (goal §禁止 —— 由 tests/basilisk_b18 钉死)
+# ============================================================================
+#  §4  不再用 F1 电流阈值 / F2 摩擦力矩阈值 / b_true 阈值 / 85C 厂家温度作 EOL;
+#       新 EOL 唯一依据 = 累计损伤 D(t) >= 1
+#  §5  沿用已有 Arrhenius a_T 与已验证 g_duty (权重/指数一律不改), 不造第二套
+#  §7  L_ref 不得根据 event count / failure fraction / RUL RMSE 反推;
+#       三情景数值 (4.5 / 3.0 / 2.25 年) 在任何 lifetime 数据生成前冻结
+#  §8  primary_scenario = NOMINAL 预先确定, 理由只能是"reference duty 下设计寿命
+#       等于任务仿真 horizon", 绝不能是"它产生的 failure fraction 更好看"
+#  §13 sensitivity 只用于透明性, 不得据其改 primary
+#  §14 Gate 失败 -> B18_SCENARIO_NOT_INFORMATIVE, 禁止回头改 L_ref
+#  §21 不训练 RUL (target_only / source_finetune / source_mmd / rate / Wiener PF / S6)
+#
+# 不得修改: basilisk_v1 / b1 / b11 / b12 / b13 / b14 / b15 / b16 / b17 的任何产物,
+#           configs/wheel.yaml, src/sim/wheel_sim.py, analytic S2.5-S5B。
+
+base_config: configs/wheel_basilisk.yaml
+
+# CRN 延续 B1.4: 同一 seed -> 逐轨迹物理参数与 duty 序列逐位相同
+seed: 20260809
+
+# ---------- HR16 额定值 (只读复验, 与 B1..B1.4 逐值相同) ----------
+rated:
+  source: basilisk_rwFactory_Honeywell_HR16
+  omega_rated_rad_s: 628.3185307179587
+  torque_rated_Nm: 0.2
+  rotor_inertia_Js_kgm2: 0.07957747154594767
+  rotor_mass_kg: 9.0
+  u_s_Nm: 2.8e-06
+  u_d_Nm: 7.7e-07
+  tol_rel: 1.0e-09
+
+# ---------- 参考口径 / wear drive: 完全沿用 B1.1-B1.4 冻结值 (§5 禁止重调) ----------
+reference:
+  caliber: p95
+  speed_stat: omega_p95
+  torque_stat: torque_p95
+  speed_stat_rms: omega_rms
+  torque_stat_rms: torque_rms
+  aggregate: non_overlapping_windows_equal_weight_per_mode
+
+wear_drive:
+  # §5 明令: 不要重新调 g_duty 权重。以下 6 个数与 B1/B1.1/B1.2/B1.3/B1.4 逐值相同,
+  # 由 test_assumption_registry.py::test_g_duty_weights_unchanged 逐值比对钉死。
+  speed_util_weight: 0.40
+  torque_util_weight: 0.40
+  zero_crossing_weight: 0.10
+  maneuver_weight: 0.10
+  speed_util_exponent: 2.0
+  torque_util_exponent: 1.0
+  ref_floor: 1.0e-04
+  g_duty_max: 20.0
+
+# ============================================================================
+# §4/§5/§6: 累计损伤失效定义 (本阶段的核心新增假设)
+# ============================================================================
+damage_model:
+  name: B18_CUMULATIVE_DAMAGE
+  # 本阶段唯一 EOL 判据
+  eol_rule: cumulative_damage_reaches_one
+  eol_threshold_D: 1.0
+  # provenance 分类 (§3): 本阶段首次引入 -> C
+  provenance: NEW_B18_ASSUMPTION
+  # 语义声明 —— 后续文档只能这么称呼它 (§0/§24)
+  semantics: engineering_assumption_failure_definition
+  forbidden_naming: manufacturer_failure_specification
+
+  # ---- 损伤律 (符号形式见 src/sim/damage_model.py) ----
+  #   dD/dt = stress(t) / L_ref
+  #   stress(t) = g_duty(t) * a_T(T(t))
+  equation: dD_dt = stress(t) / L_ref
+  stress_equation: stress(t) = g_duty(t) * a_T(T(t))
+  stress_nonnegative_required: true
+  damage_monotonic_required: true
+
+  # ---- 复用而非新建 (§5) ----
+  reuse_arrhenius: true                 # a_T 用 sim.disturbance 的 Ea / T_ref
+  reuse_g_duty: true                    # g_duty 用 wear_drive 上面那组权重
+  second_temperature_acceleration_allowed: false
+  g_duty_reweighted: false
+  # B1 把 g_duty 用来调 tau_years; B1.8 的 g_duty 进 stress。二者是**同一个
+  # 工况严酷度因子的两种接法**, 只能接一次 —— 否则 duty 被双重计入。
+  g_duty_enters_tau_years: false
+  tau_years_used_in_damage: false
+
+  # ---- §6 reference condition (可解释性锚点) ----
+  reference_condition:
+    g_duty: 1.0                         # 由 sum(weights)=1 恒成立, 非手填
+    temperature_source: sim.disturbance.arrhenius_T_ref_K
+    stress: 1.0
+    implies: D(t) = t / L_ref
+
+  # ---- §9 damage -> friction telemetry ----
+  friction_link:
+    equation: b(t) = b0 * (1 + Delta * D(t))
+    valid_domain: D <= 1
+    # D>1 区域该式无物理主张 (D=1 已是失效态)。post-EOL 行仍保留在数据里
+    # (供审计与右删失/删失后段处理), 但 b 冻结在 D=1 处的值 —— 这是一条
+    # **显式规则**, 不是"顺手线性外推"。
+    post_eol_rule: b_frozen_at_D_eq_one
+    post_eol_rule_provenance: NEW_B18_ASSUMPTION
+    # §9: 旧的 1 - exp(-integ/tau) 形状不再作主 damage state
+    legacy_shape_used_as_damage_state: false
+
+  # ---- §10 润滑突变 ----
+  lubrication_spike:
+    # 保持原定义 (概率与倍数都不改), 但只作用于 b(t)/telemetry
+    prob_source: sim.disturbance.lube_spike_prob
+    multiplier_range: [1.3, 1.8]
+    affects_b: true
+    affects_damage_state: false          # 不得跳变 D
+    rationale: >-
+      区分 underlying damage 与 sudden observable friction excursion:
+      润滑突变让遥测出现可观测跳变, 但不改变累计损伤积分, 因此 EOL 不被
+      一次润滑事件直接决定。
+
+  # ---- §11 thermal role ----
+  thermal_role:
+    T_is: environmental_or_telemetry_condition
+    T_is_not: physics_derived_wheel_thermal_state
+    used_as: arrhenius_acceleration_input
+    claimed_as_thermal_model: false
+    b17_reference: B17_THERMAL_PROVENANCE_INSUFFICIENT
+
+# ============================================================================
+# §7: L_ref 情景登记 (在任何 lifetime 数据之前冻结; 禁止第四个情景)
+# ============================================================================
+lifetime_scenarios:
+  # H 直接读 Basilisk lifetime horizon, 不是另选的数字
+  horizon_source: sim.duration_years
+  horizon_years: 3.0
+  n_scenarios_allowed: 3
+  # 顺序固定 (报告与 ordering check 共用)
+  order: [SLOW, NOMINAL, FAST]
+  scenarios:
+    SLOW:
+      multiplier: 1.5
+      L_ref_years: 4.5
+    NOMINAL:
+      multiplier: 1.0
+      L_ref_years: 3.0
+    FAST:
+      multiplier: 0.75
+      L_ref_years: 2.25
+  # §7 反推禁令 (由 test_no_outcome_tuning / test_no_failure_fraction_selection 钉死)
+  derived_from_event_count: false
+  derived_from_failure_fraction: false
+  derived_from_rul_metric: false
+  rationale: >-
+    直接用任务设计时间作为场景假设: L_ref 是"reference duty 下的设计寿命"。
+    NOMINAL 取 L_ref = H 使 D(t) = t / H, SLOW/FAST 只是把设计寿命放宽/收紧
+    到 1.5x / 0.75x。三个数没有任何一位来自仿真结果。
+
+# ============================================================================
+# §8: primary scenario 预先确定 (先于 sensitivity 数据)
+# ============================================================================
+primary_scenario:
+  name: NOMINAL
+  selected_before_results: true
+  # §8 唯一允许的理由 (逐字)
+  reason: reference duty 下设计寿命等于任务仿真 horizon
+  forbidden_reason: 因为它产生的 failure fraction 更好
+  provenance: NEW_B18_ASSUMPTION
+  # freeze_primary_scenario.py 会断言以下产物在预选记录写入时尚不存在
+  must_preselect_before:
+    - checkpoints/basilisk_b18/sensitivity_summary.json
+    - checkpoints/basilisk_b18/sensitivity_audit.json
+    - checkpoints/basilisk_b18/frozen_primary_scenario.json
+    - checkpoints/basilisk_b18/dataset_summary.json
+    - checkpoints/basilisk_b18/feature_stats.json
+    - data/sim/wheel_basilisk_b18/final/wheel_all.h5
+
+# ---------- §2 协议冻结 ----------
+protocol:
+  path: docs/basilisk_b18/protocol.md
+  hash_path: checkpoints/basilisk_b18/protocol_hash.json
+  must_freeze_before:
+    - checkpoints/basilisk_b18/assumption_registry.json
+    - checkpoints/basilisk_b18/damage_model.json
+    - checkpoints/basilisk_b18/sensitivity_summary.json
+    - checkpoints/basilisk_b18/sensitivity_audit.json
+    - checkpoints/basilisk_b18/frozen_primary_scenario.json
+    - checkpoints/basilisk_b18/dataset_summary.json
+    - checkpoints/basilisk_b18/feature_stats.json
+
+# ============================================================================
+# §12: sensitivity 集 (common random numbers, 唯一差异 = L_ref)
+# ============================================================================
+sensitivity:
+  n_traj: 60
+  # CRN 必须延续 B1.4 的配对哈希 —— 不同即说明随机输入被动过
+  expected_paired_trajectory_hash: ff1de559b2746dcb394c4de6d70bda4d96ca594d1b953f58a4fa390366f41cf6
+  # 三情景之间必须逐位相同的输入
+  shared_inputs: [mode_weights, b0, Delta, noise, profile_phase,
+                  initial_conditions, tau_years_draw, T_base, T_amp, seed_traj]
+  only_difference: L_ref
+  # 只报告统计量, 不落 telemetry (§13: sensitivity 只用于透明性)
+  persist_telemetry: false
+
+# ============================================================================
+# §14: NOMINAL 模型有效性 Gate (14 条)
+# ============================================================================
+gate:
+  # 1-8 结构性
+  require_damage_monotonic: true
+  nan_inf_max: 0
+  min_g_duty_damage_spearman: 0.0        # Gate 3: 正相关
+  high_load_modes: [imaging, nadir, desat]
+  low_load_modes: [cruise, safe]
+  require_high_load_damage_rate_greater: true
+  require_eol_only_from_damage: true
+  require_no_model_prediction_read: true
+  require_no_test_metric_read: true
+  forbidden_xt_fields: [D, damage, eol, EOL, rul_true, b_true, Kt, Tc, b0, omega0]
+  # 9-13 统计可用性 (§14 注: 只判断数据能否支撑统计研究)
+  min_event_observed: 20
+  min_censored: 10
+  early_eol_horizon_frac: 0.10           # 与 B1.2/B1.4 冻结口径同
+  early_eol_frac_max: 0.35               # §14(11) 严格小于
+  late_eol_horizon_frac: 0.90
+  late_eol_frac_max: 0.60                # §14(12) 严格小于
+  eol_iqr_min: 0.0                       # §14(13) IQR > 0
+  # 14 CRN
+  require_crn_reproducible: true
+  crn_recheck_n_traj: 3                  # 重算前 N 条比对内容哈希
+  # 物理硬界 (沿用 B1.x, 只作报告与 NaN/Inf 之外的兜底)
+  temperature_min_K: 200.0
+  temperature_max_K: 400.0
+  current_absmax_A: 50.0
+  # 早/晚 EOL 分母口径 (沿用 B1.2 冻结定义, 不另立)
+  early_eol_denominator: all_trajectories
+  late_eol_denominator: event_observed_only
+  fail_verdict: B18_SCENARIO_NOT_INFORMATIVE
+
+# ============================================================================
+# §15: sensitivity 单调性 sanity (只作方向验证)
+# ============================================================================
+sensitivity_ordering:
+  require_event_fraction_monotone: true   # FAST >= NOMINAL >= SLOW
+  require_median_eol_monotone: true       # FAST <= NOMINAL <= SLOW
+  fail_verdict: B18_DAMAGE_MODEL_INVALID
+  rationale: >-
+    不满足说明 L_ref 的数学作用实现错误 (D = integral(stress)/L_ref 对 L_ref
+    严格单调递减), 是实现 bug 而非"场景选得不好"。
+
+# ============================================================================
+# §17: 正式 primary 数据集
+# ============================================================================
+dataset:
+  n_traj: 150
+  scenario: NOMINAL
+  # §17 明令: 不得重新抽样物理参数分布规则
+  resample_param_distribution: false
+  persist_telemetry: true
+
+# ============================================================================
+# §20: 特征正确性 Gate
+# ============================================================================
+feature_gate:
+  nan_count_max: 0
+  inf_count_max: 0
+  b_hat_p95_rel_err_max: 0.10
+  hi_p95_min: 0.80
+  require_hash_reproducible: true
+  # x_T 绝不允许出现的真值/标签
+  forbidden_xt_datasets: [D, damage, eol_idx, rul, rul_lower_bound, b_true]
+  forbidden_truth_attrs: [b_true, Kt, Tc, b0, omega0, Delta, tau_years,
+                          T_base, T_amp, seed_traj, L_ref_years,
+                          D_end, eol_idx_true]
+
+# ---------- §19 特征构建 (完全复用 src/sim/build_hi.py) ----------
+features:
+  reuse_build_hi: true
+  hi_formula_modified: false
+  xt_cols: [I_m, omega, T, T_cmd, sigma_Im, b_hat_selfcal, dT, omega_err]
+  mission_features_in_xt: false
+  truth_fields: [b_true, Kt, Tc, b0, omega0, D]
+
+# ---------- 下一阶段 split (只写文档, B1.8 不执行 —— §21) ----------
+next_split:
+  train_frac: 0.30
+  val_frac: 0.20
+  test_frac: 0.50
+  stratify: [event_observed, censored]
+  level: trajectory
+
+paths:
+  profile_h5: data/mission_profile/basilisk_v1/profiles.h5
+  sim_dir: data/sim/wheel_basilisk_b18
+  final_dir: data/sim/wheel_basilisk_b18/final
+  feature_h5: data/features/wheel/basilisk_b18/target_features.h5
+  ckpt_dir: checkpoints/basilisk_b18
+  doc_dir: docs/basilisk_b18
+
+transfer:
+  enabled: false                        # §21: 本阶段绝对不跑

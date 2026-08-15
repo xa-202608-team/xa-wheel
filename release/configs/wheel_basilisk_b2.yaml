@@ -1,0 +1,100 @@
+# configs/wheel_basilisk_b2.yaml
+# BASILISK-B2 —— Trajectory Split + Target-only Generalization Gate
+#
+# 本阶段回答唯一一个问题: 在 B1.9 冻结的新数据 (Basilisk 工况 + D-based EOL +
+# observable damage HI) 上, Target-only 能否稳定学会新的 RUL 任务?
+#
+# 纪律:
+#   * 旧 analytic S25_PASS **不得继承** —— 那是 schema_v1 + friction EOL 上的结论。
+#   * 不跑 source transfer (那是 B4)。
+#   * 训练超参沿用 S2.5 已验证的冻结组合, **不重新调参**。
+#   * 不做 S3 truncation —— 本阶段用完整 train history。
+base_config: configs/wheel_basilisk_b19.yaml
+
+paths:
+  # 输入 = B1.9 冻结的 feature 文件 (只读)
+  b19_feature_h5: data/features/wheel/basilisk_b19/target_features.h5
+  b19_frozen_def: checkpoints/basilisk_b19/frozen_feature_definition.json
+  b19_status: STATUS_BASILISK_B19.md
+  # B2 自己的输出
+  ckpt_dir: checkpoints/basilisk_b2
+  doc_dir: docs/basilisk_b2
+  metrics_json: checkpoints/basilisk_b2/metrics.json
+  split_json: checkpoints/basilisk_b2/split.json
+
+protocol:
+  path: docs/basilisk_b2/protocol.md
+  hash_path: checkpoints/basilisk_b2/protocol_hash.json
+
+# 覆盖继承来的 target_feature_path: B2 只吃 B1.9 的产物
+transfer:
+  target_feature_path: data/features/wheel/basilisk_b19/target_features.h5
+  target_has_nodes: false
+  # HI dataset 名。旧栈把它硬编码成 hi_b; B1.9 的主 HI 叫 hi_damage_obs。
+  # 冻结代码不得修改, 因此 B2 自带 loader 并从这里读列名。
+  target_hi_key: hi_damage_obs
+  auxiliary_hi_key: hi_friction
+
+b2:
+  # ---------- §2 轨迹级划分 ----------
+  split:
+    train: 0.30
+    val: 0.20
+    test: 0.50
+    # 分层键 = event_observed / censored (不是 EOL 分位数 —— 本阶段 79 条删失
+    # 轨迹没有 EOL, 按 EOL 分层无从定义)。event 组内再按 EOL 分位数细分, 使
+    # 三个划分的 event 难度分布也可比。
+    stratify_by: event_censored
+    n_eol_strata_within_event: 4
+    split_seed: 20260810
+    level: trajectory          # 轨迹级, 严禁按时间窗打散
+  # ---------- §3 不做 S3 截断 ----------
+  use_full_train_history: true
+  target_truncate_hi: null     # 显式置空: 本阶段禁止截断
+  # ---------- §4 删失监督 ----------
+  censor_aware: true
+  censor_hinge_eta: 1.0        # 与 transfer.censor_hinge_eta 同值, 同一份语义
+  forbid_fake_rul_for_censored: true
+  # ---------- §5 输入 ----------
+  # x_T = B1.9 冻结的 10 列, 逐字不变。hi_damage_obs **不进普通输入**,
+  # 只允许进 health auxiliary loss (loss.lambda_hi 那一项)。
+  xt_source: b19_frozen_xt_cols
+  hi_in_plain_input: false
+  hi_in_auxiliary_loss: true
+  mission_features_in_input: false   # 那是 B3 的消融变量, 本阶段固定关闭
+  # ---------- §6 基线 ----------
+  baselines: [const_mean_info, damage_extrapolation, target_only]
+  forbid_source_transfer: true
+  # 平凡基线常数只由 train 划分求得 (绝不看 val/test)
+  const_from_split: train
+  # 损伤外推基线: 用 hi_damage_obs 的因果滑窗斜率外推到 hi_fail
+  damage_extrapolation:
+    hi_key: hi_damage_obs
+    hi_fail: 1.0
+    slope_window: 2000         # 与 rate.slope_window 同值 (>> L=64)
+  # ---------- §8 Gate ----------
+  gate:
+    seeds: [72, 73, 74, 75, 76]
+    metric: info_macro_rmse    # test info 轨迹宏平均 RMSE
+    baseline: const_mean_info
+    min_improve_count: 4
+    min_corr_count: 4
+    min_psr_count: 4
+    psr_min: 0.30
+    bootstrap_seed: 20260810
+    bootstrap_samples: 2000
+    require_val_only_checkpoint: true
+  # ---------- §9 censor 分层报告 ----------
+  censor_report:
+    strata: [event_observed_test, censored_test, common_evaluable_endpoints]
+    # 删失轨迹的 EOL 类指标不可观测 -> 必须 NaN + n=0, 严禁转 0
+    forbid_nan_to_zero: true
+
+# S2.5 冻结训练超参 (§7) —— 只在此处复述以便审计, 数值必须与 wheel.yaml 一致。
+# **不重新调参**: 只有训练根本不收敛 / 代码不兼容才判 B2_CONFIG_INCOMPATIBLE。
+b2_frozen_training_expected:
+  early_stop_metric: info_macro_rmse
+  max_epochs: 8
+  early_stop_patience: 2
+  weight_decay: 1.0e-03
+  source: configs/wheel.yaml::training (S2.5 selected_candidate = D)

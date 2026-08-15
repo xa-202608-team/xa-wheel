@@ -1,0 +1,58 @@
+# RELEASE_TEST_SCOPE —— B8-HANDOFF-FINAL §6
+#
+# full_test_suite_present = true   (tests/ 122 个文件与原仓库逐字节一致)
+# full_artifact_history_present = false  (release 是依赖闭包子集)
+#
+# 下列测试文件属于'阶段考古'类: 它们审计 B1.x 各阶段的历史中间产物
+# (候选 HDF5 / 早期 analytic checkpoints / 历史脚本)。按 §11 这些产物
+# 刻意未放入 release, 因此这些测试在 release 内因'被审计文件不存在'失败,
+# 不是代码缺陷 —— 同样的测试在原仓库内全部 PASS (1098 passed / 0 failed)。
+#
+# 逐条已核: 失败原因全部为 已消失/缺失/不存在/FileNotFoundError/ImportError: 缺
+# 未使用 skip / xfail / mark 掩盖任何守卫。
+#
+tests/basilisk/test_dataset_isolation.py
+tests/basilisk/test_profile_determinism.py
+tests/basilisk/test_profile_physics.py
+tests/basilisk/test_profile_schema.py
+tests/basilisk_b1/test_b1_dataset_isolation.py
+tests/basilisk_b1/test_candidate_selection_no_model_metric.py
+tests/basilisk_b1/test_candidate_selection_no_rul.py
+tests/basilisk_b1/test_old_basilisk_v1_unchanged.py
+tests/basilisk_b12/test_b12_candidate_selection_no_rul.py
+tests/basilisk_b12/test_b12_dataset_isolation.py
+tests/basilisk_b12/test_electrical_consistency.py
+tests/basilisk_b12/test_failure_candidate_registry.py
+tests/basilisk_b12/test_failure_mechanism_monotonicity.py
+tests/basilisk_b13/test_b13_baseline_contract.py
+tests/basilisk_b13/test_b13_degradation_mapping.py
+tests/basilisk_b13/test_b13_no_outcome_tuning.py
+tests/basilisk_b14/test_b14_baseline_contract.py
+tests/basilisk_b14/test_b14_no_outcome_tuning.py
+tests/basilisk_b14/test_b14_q0_provenance.py
+tests/basilisk_b15/test_b15_baseline_contract.py
+tests/basilisk_b15/test_b15_q0_accounting.py
+tests/basilisk_b15/test_b15_stage_boundary.py
+tests/basilisk_b15/test_b15_threshold_provenance.py
+tests/basilisk_b16/test_b16_baseline.py
+tests/basilisk_b16/test_b16_candidate_registry.py
+tests/basilisk_b16/test_b16_no_outcome_selection.py
+tests/basilisk_b16/test_b16_old_artifacts_unchanged.py
+tests/basilisk_b17/test_b17_baseline_contract.py
+tests/basilisk_b17/test_b17_no_outcome_tuning.py
+tests/basilisk_b18/test_b18_no_outcome_tuning.py
+tests/basilisk_b19/test_b19_baseline_contract.py
+tests/basilisk_b19/test_b19_feature_gate.py
+tests/basilisk_b19/test_b19_no_hidden_damage_leakage.py
+tests/basilisk_b19/test_b19_observable_damage_proxy.py
+tests/basilisk_b19/test_b19_old_artifacts_unchanged.py
+tests/basilisk_b2/test_b2_baseline_contract.py
+tests/basilisk_b3x/test_b3x_discipline.py
+tests/basilisk_b4x/test_b4x_discipline.py
+tests/basilisk_b5/test_b5_baseline_contract.py
+tests/basilisk_b6/test_b6_baseline_contract.py
+tests/basilisk_b7/test_b7_baseline_contract.py
+tests/test_generalization_gate.py
+tests/test_metrics_s4.py
+tests/test_transfer_invariants.py
+tests/test_wiener_pf.py

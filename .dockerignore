@@ -1,0 +1,15 @@
+# 飞轮组件 Docker 构建上下文排除规则
+# release/ 已不含 data/ (数据通过 volume 挂载, 不烘焙进镜像)
+
+**/__pycache__
+**/*.pyc
+**/*.pyo
+
+# smoke 运行时产物, 不属于冻结 release (防止泄漏后被 COPY 进镜像)
+release/checkpoints/_smoke_b5
+
+# 组件级文档/辅助文件, 不属于运行时镜像
+PROGRESS.md
+PLACEHOLDER.md
+verify_mounted.py
+README.md

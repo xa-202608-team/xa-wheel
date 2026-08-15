@@ -1,0 +1,34 @@
+# 强制文本文件 LF 行尾 (防 Windows CRLF 进 Linux/Docker 容器报错;
+# release/CODE_MANIFEST.sha256 的哈希以 LF 字节为准, 行尾漂移会导致校验失败)
+*.sh   text eol=lf
+*.py   text eol=lf
+*.yaml text eol=lf
+*.yml  text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.json text eol=lf
+*.csv  text eol=lf
+*.ini  text eol=lf
+*.lock text eol=lf
+*.sha256 text eol=lf
+*.svg  text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+.dockerignore text eol=lf
+Dockerfile text eol=lf
+
+# 冻结证据字节链保护: release/** 为交付快照原样字节 (含原始 CRLF 行尾),
+# 不做任何换行归一化/转换 —— 行尾漂移会破坏 CODE_MANIFEST.sha256 与
+# B6/B7 冻结契约的逐字节校验。置于上面的扩展名规则之后以覆盖之。
+# 本仓库新增的根级文件仍按上方规则维持 LF。
+release/** -text
+
+# 二进制不做行尾处理
+*.h5   binary
+*.hdf5 binary
+*.npz  binary
+*.pt   binary
+*.pth  binary
+*.pdf  binary
+*.png  binary
+*.jpg  binary

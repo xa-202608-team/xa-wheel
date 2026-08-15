@@ -1,0 +1,144 @@
+# configs/wheel_basilisk_b21.yaml
+#
+# BASILISK-B2.1 —— Split-Coverage Robustness Gate
+#
+# ############################################################################
+# 冻结事实 (本阶段不得覆盖、不得重新解释):
+#   * B2_GENERALIZATION_FAIL 保持终局
+#   * B3X_NO_STABILIZING_SIGNAL
+#   * B4X_TRANSFER_STABILIZATION_SIGNAL 仅为探索性 (EXPLORATORY_ONLY)
+#   * 不存在任何正式的 positive-transfer 结论
+#
+# 已知结构缺陷 (本阶段唯一要修的东西):
+#   lifetime-support mismatch —— B2 的 test 含有比 train 与 val **所有** event
+#   轨迹都更短命的 event 轨迹 (test min EOL 21658 < train min 22336 /
+#   val min 22426)。失效区既不在训练信号里, 也不在模型选择信号里。
+#
+# 本阶段只改一件事: **划分协议**。
+# 禁止修改: model architecture / optimizer / loss / HI / RUL /
+#           source checkpoints / MMD lambda / mission features /
+#           B2·B3X·B4X 的任何旧产物。
+#
+# §7 纪律: 不得用 test 表现挑划分。确定性划分若不满足覆盖要求 ->
+#          直接报 B21_SPLIT_INVALID, 绝不换 seed 试到好看为止。
+# §13/§14: FAIL -> 停止, 不跑迁移。PASS -> 停止并写下 B5 计划, 不自动跑 B5。
+# ############################################################################
+base_config: configs/wheel_basilisk_b2.yaml
+
+paths:
+  # 只读输入
+  b19_feature_h5: data/features/wheel/basilisk_b19/target_features.h5
+  b2_split_json: checkpoints/basilisk_b2/split.json
+  b2_metrics_json: checkpoints/basilisk_b2/metrics.json
+  b3x_summary_json: checkpoints/basilisk_b3x/summary.json
+  b4x_summary_json: checkpoints/basilisk_b4x/summary.json
+  # B2.1 自己的输出 (独立命名空间, 不碰任何旧目录)
+  ckpt_dir: checkpoints/basilisk_b21
+  doc_dir: docs/basilisk_b21
+  split_json: docs/basilisk_b21/split_manifest.json
+  metrics_json: checkpoints/basilisk_b21/gate_metrics.json
+  summary_json: checkpoints/basilisk_b21/summary.json
+
+protocol:
+  path: docs/basilisk_b21/protocol.md
+  hash_path: checkpoints/basilisk_b21/protocol_hash.json
+
+b21:
+  label: SPLIT_COVERAGE_ROBUSTNESS
+  # 前置事实, 由 verify_baseline 契约钉死, 本阶段只读不改
+  frozen_facts:
+    b2_verdict: B2_GENERALIZATION_FAIL
+    b2_verdict_status: B2_GENERALIZATION_FAIL_REMAINS_FINAL
+    b3x_verdict: B3X_NO_STABILIZING_SIGNAL
+    b4x_verdict: B4X_TRANSFER_STABILIZATION_SIGNAL
+    b4x_status: EXPLORATORY_ONLY
+    no_formal_positive_transfer_claim: true
+    known_defect: lifetime_support_mismatch
+  # §0 禁改面
+  forbidden_changes: [model_architecture, optimizer, loss, hi, rul,
+                      source_checkpoints, mmd_lambda, mission_features,
+                      b2_artifacts, b3x_artifacts, b4x_artifacts]
+
+  # ---------- §2/§3/§4 新划分协议 ----------
+  split:
+    level: trajectory
+    train: 0.30
+    val: 0.20
+    test: 0.50
+    split_seed: 20260813
+    # §2: event 轨迹的 EOL **只用于划分分层**, 不作任何监督/评估用途
+    eol_use: split_stratification_only
+    event:
+      # 数据集级分位, 在任何模型训练之前算定 (预登记)
+      bins: [short, medium, long]
+      quantiles: [0.3333333333333333, 0.6666666666666666]
+      quantile_basis: dataset_level_event_eol_before_training
+      key: eol_idx
+    # §3: 删失轨迹**单独**按观测时长分位分层; 绝不发明 EOL
+    censored:
+      bins: [short_obs, medium_obs, long_obs]
+      quantiles: [0.3333333333333333, 0.6666666666666666]
+      quantile_basis: dataset_level_observed_duration_before_training
+      key: observed_duration
+      forbid_fake_eol: true
+      # 若全部删失轨迹观测时长相同 (仿真同一 horizon 截断), 分位退化成单一 bin。
+      # 必须如实报告为 degenerate, 不得为了凑三个 bin 而编造边界。
+      allow_degenerate_bins: true
+    # §4: 联合分层 = (event/censored) x (lifetime/observed-duration bin)
+    joint_stratify_by: [event_censored, lifetime_bin]
+    # §5 由构造保证 min-EOL 序关系的预登记规则:
+    # short-life event 层按 EOL 升序, 前三条依次锚定到 train / val / test。
+    # 这是**覆盖驱动**的确定性规则, 与 test 表现无关。
+    short_bin_anchor_order: [train, val, test]
+
+  # ---------- §5 硬性覆盖要求 ----------
+  coverage_requirements:
+    no_trajectory_overlap: true
+    every_event_bin_in_all_splits: true
+    train_min_event_eol_le_test_min: true
+    val_min_event_eol_le_test_min: true
+    train_val_contain_short_life: true
+    censored_fraction_in_all_splits: true
+    invalid_label: B21_SPLIT_INVALID
+    forbid_seed_search: true
+
+  # ---------- §9 训练与对比 ----------
+  seeds: [102, 103, 104, 105, 106]
+  methods: [target_only, const_mean_info, damage_extrapolation]
+  forbid_transfer: true
+  reuse_frozen_b2_training: true
+
+  # ---------- §10/§11 指标 ----------
+  primary_metric: test_info_trajectory_macro_rmse
+  report_metrics: [macro_corr, psr, warning_coverage, warning_miss,
+                   short_life_rmse, medium_life_rmse, long_life_rmse,
+                   censored_lower_bound_violation_rate]
+  # catastrophic 阈值只允许来自 target_only 的 **validation** 轨迹 RMSE 中位数
+  catastrophic:
+    multiplier: 2.0
+    threshold_source: target_only_validation_median_trajectory_rmse
+    forbid_test_derived_threshold: true
+    definition: trajectory_rmse_gt_multiplier_times_val_median
+    # 每 seed 判定: short-life test 轨迹中 catastrophic 条数 == 0 才算"无灾难"
+    max_short_life_catastrophic_per_seed: 0
+
+  # ---------- §12 gate ----------
+  gate:
+    baseline: const_mean_info
+    min_improve_count: 4
+    min_corr_count: 4
+    min_no_catastrophic_short_count: 4
+    require_warning_valid: true
+    require_val_only_checkpoint: true
+    bootstrap_seed: 20260813
+    bootstrap_samples: 2000
+    ci_unit: one_paired_difference_per_seed
+    pass_label: B21_GENERALIZATION_PASS
+    fail_label: B21_GENERALIZATION_FAIL
+
+  # ---------- §13/§14 出口 ----------
+  exit_rules:
+    on_fail: stop_do_not_run_transfer
+    on_pass: stop_and_write_next_stage_b5
+    next_stage_name: B5 formal transfer on the frozen B2.1 split
+    forbid_auto_run_b5: true

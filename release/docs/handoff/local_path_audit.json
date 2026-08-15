@@ -1,0 +1,162 @@
+{
+  "secret_hits": [],
+  "absolute_path_hits": [
+    {
+      "path": "t.py",
+      "pattern": "miniconda",
+      "reason": "Miniconda absolute path",
+      "count": 1
+    },
+    {
+      "path": ".claude/settings.json",
+      "pattern": "miniconda",
+      "reason": "Miniconda absolute path",
+      "count": 22
+    },
+    {
+      "path": ".claude/settings.local.json",
+      "pattern": "/Users/",
+      "reason": "macOS home",
+      "count": 6
+    },
+    {
+      "path": "docs/diagnostics_20260806.md",
+      "pattern": "C:\\\\",
+      "reason": "Windows C: drive",
+      "count": 1
+    },
+    {
+      "path": "checkpoints/basilisk_b12/electrical_provenance.json",
+      "pattern": "C:\\\\",
+      "reason": "Windows C: drive",
+      "count": 3
+    },
+    {
+      "path": "checkpoints/basilisk_b16/wheel_inventory.json",
+      "pattern": "miniconda",
+      "reason": "Miniconda absolute path",
+      "count": 1
+    },
+    {
+      "path": "checkpoints/basilisk_b17/thermal_parameter_registry.json",
+      "pattern": "miniconda",
+      "reason": "Miniconda absolute path",
+      "count": 1
+    },
+    {
+      "path": "checkpoints/basilisk_v1/install_diag.json",
+      "pattern": "C:\\\\",
+      "reason": "Windows C: drive",
+      "count": 2
+    },
+    {
+      "path": "data/features/dyntransfer/phm2012_v1/audit.json",
+      "pattern": "/Users/",
+      "reason": "macOS home",
+      "count": 1
+    },
+    {
+      "path": "docs/basilisk_b1/protocol.md",
+      "pattern": "miniconda",
+      "reason": "Miniconda absolute path",
+      "count": 1
+    },
+    {
+      "path": "docs/basilisk_b1/REPRODUCE.md",
+      "pattern": "miniconda",
+      "reason": "Miniconda absolute path",
+      "count": 2
+    },
+    {
+      "path": "docs/basilisk_b11/REPRODUCE.md",
+      "pattern": "miniconda",
+      "reason": "Miniconda absolute path",
+      "count": 1
+    },
+    {
+      "path": "docs/basilisk_b12/REPRODUCE.md",
+      "pattern": "C:\\\\",
+      "reason": "Windows C: drive",
+      "count": 1
+    },
+    {
+      "path": "docs/basilisk_b13/REPRODUCE.md",
+      "pattern": "miniconda",
+      "reason": "Miniconda absolute path",
+      "count": 2
+    },
+    {
+      "path": "docs/basilisk_b14/REPRODUCE.md",
+      "pattern": "C:\\\\",
+      "reason": "Windows C: drive",
+      "count": 1
+    },
+    {
+      "path": "docs/basilisk_b15/REPRODUCE.md",
+      "pattern": "C:\\\\",
+      "reason": "Windows C: drive",
+      "count": 1
+    },
+    {
+      "path": "docs/basilisk_b16/REPRODUCE.md",
+      "pattern": "/Users/",
+      "reason": "macOS home",
+      "count": 1
+    },
+    {
+      "path": "docs/basilisk_b17/REPRODUCE.md",
+      "pattern": "miniconda",
+      "reason": "Miniconda absolute path",
+      "count": 2
+    },
+    {
+      "path": "docs/basilisk_b17/selected_wheel_audit.md",
+      "pattern": "miniconda",
+      "reason": "Miniconda absolute path",
+      "count": 1
+    },
+    {
+      "path": "docs/basilisk_b18/REPRODUCE.md",
+      "pattern": "/Users/",
+      "reason": "macOS home",
+      "count": 1
+    },
+    {
+      "path": "docs/basilisk_b19/REPRODUCE.md",
+      "pattern": "miniconda",
+      "reason": "Miniconda absolute path",
+      "count": 2
+    },
+    {
+      "path": "docs/basilisk_b5/REPRODUCE.md",
+      "pattern": "miniconda",
+      "reason": "Miniconda absolute path",
+      "count": 3
+    },
+    {
+      "path": "docs/basilisk_v1/installation_report.md",
+      "pattern": "C:\\\\",
+      "reason": "Windows C: drive",
+      "count": 2
+    },
+    {
+      "path": "docs/basilisk_v1/REPRODUCE.md",
+      "pattern": "miniconda",
+      "reason": "Miniconda absolute path",
+      "count": 1
+    },
+    {
+      "path": "docs/开发推进计划/progress.md",
+      "pattern": "C:\\\\",
+      "reason": "Windows C: drive",
+      "count": 2
+    },
+    {
+      "path": "scripts/handoff/local_path_audit.py",
+      "pattern": "C:\\\\",
+      "reason": "Windows C: drive",
+      "count": 1
+    }
+  ],
+  "audit_passed": true
+}

@@ -1,0 +1,311 @@
+# configs/wheel_basilisk_b17.yaml
+#
+# BASILISK-B1.7 —— Documented Thermal Failure Feasibility Gate 配置。
+#
+# 本阶段只回答一个问题:
+#   "能否基于 DIRECT 温度限制 + 可审计热参数, 构建一个物理上站得住脚的
+#    reaction-wheel thermal failure model?"
+#
+# 关键设计约束 (§6 / §10):
+#   本文件**刻意不包含任何可调热参数数值** —— 没有手工设定的 R_th / C_th /
+#   tau_th / efficiency / Kt / winding resistance。热模型参数只能由
+#   provenance registry (由来源审计脚本产出) 提供。若来源没有, 就是没有,
+#   不在这里"给个典型值试试"。
+#   本文件只包含: 判据、门槛、来源白名单、语义规则、路径。
+#
+# 因此下游脚本对本文件的正确用法是: 读规则, 不读物理数值。
+
+stage: BASILISK_B1.7
+component: reaction_wheel
+
+# ---------------------------------------------------------------------------
+# §0 命名空间 (不得越界写入)
+# ---------------------------------------------------------------------------
+namespace:
+  scripts_dir: scripts/basilisk_b17
+  tests_dir: tests/basilisk_b17
+  checkpoints_dir: checkpoints/basilisk_b17
+  docs_dir: docs/basilisk_b17
+  status_file: STATUS_BASILISK_B17.md
+  # 只读, 不得修改
+  read_only:
+    - configs/wheel.yaml
+    - src/sim/wheel_sim.py
+    - docs/results.md
+    - checkpoints/basilisk_v1
+    - checkpoints/basilisk_b1
+    - checkpoints/basilisk_b11
+    - checkpoints/basilisk_b12
+    - checkpoints/basilisk_b13
+    - checkpoints/basilisk_b14
+    - checkpoints/basilisk_b15
+    - checkpoints/basilisk_b16
+  # Basilisk 不得进入交付依赖链
+  must_not_contain_basilisk:
+    - requirements.txt
+    - Dockerfile
+    - docker-compose.yml
+
+# ---------------------------------------------------------------------------
+# §1 baseline 契约
+# ---------------------------------------------------------------------------
+baseline:
+  contract_path: docs/basilisk_b17/baseline_contract.json
+  # B1.7 §13/§14/§20: 不生成寿命数据 / EOL / RUL。以下路径必须**保持缺席**,
+  # 契约把"缺席"本身钉死 —— 一旦出现即为越界。
+  must_stay_absent:
+    - data/sim/wheel_basilisk_b17
+    - checkpoints/basilisk_b17/lifetime_dataset.json
+    - checkpoints/basilisk_b17/rul_metrics.json
+    - checkpoints/basilisk_b17/eol_labels.json
+    - checkpoints/basilisk_b17/thermal_aging_law.json
+
+# ---------------------------------------------------------------------------
+# §2 协议冻结 + 候选轮
+# ---------------------------------------------------------------------------
+protocol:
+  path: docs/basilisk_b17/protocol.md
+  hash_path: checkpoints/basilisk_b17/protocol_hash.json
+  # 必须在任何新来源审计**之前**冻结
+  must_freeze_before:
+    - checkpoints/basilisk_b17/temperature_provenance.json
+    - checkpoints/basilisk_b17/thermal_parameter_registry.json
+    - checkpoints/basilisk_b17/mission_power_audit.json
+    - checkpoints/basilisk_b17/thermal_model.json
+    - checkpoints/basilisk_b17/thermal_feasibility.json
+
+candidate:
+  primary: NanoAvionics_RW0
+  # 允许它成为 primary candidate 的**唯一**理由。任何其它理由都不成立。
+  sole_admissible_reason: >-
+    在当前可访问的官方来源中, 它是 B1.6 枚举出的 5 个 Basilisk RW preset 里
+    唯一具有 DIRECT 温度限制记录的 wheel。
+  # 明确写出**不是**理由的东西 (§2 反作弊)
+  inadmissible_reasons:
+    - failure_fraction 更好
+    - 预计 RUL 更合适
+    - 更方便模拟
+    - 性能更好 / 数据更多
+  # B1.6 已确认: 该 preset 的 Basilisk 源码自述为估计值, 故其
+  # omega/u_max/momentum 记 ASSUMED; 但厂商官网逐字规格 (温度范围) 的
+  # provenance 来自官网, 仍可为 DIRECT。两者不可混淆。
+  source_code_selfdeclared_estimate: true
+
+failure_mode:
+  name: THERMAL_COMPONENT_LIMIT
+  frozen: true
+  # 阈值取值来源: 官方产品页记录值 (由 audit_thermal_sources.py 重新抓取核验)
+  threshold_symbol: T_max_direct
+  # B1.5 已判定 u_max 是 command saturation 语义, 不是器件失效限 —— 不得复用
+  forbidden_thresholds:
+    - u_max
+    - Omega_max_at_BOL
+    - friction_torque_p95
+
+# ---------------------------------------------------------------------------
+# §3 来源白名单 / 黑名单 + provenance 级别
+# ---------------------------------------------------------------------------
+provenance:
+  levels:
+    - DIRECT
+    - DERIVED_FROM_DIRECT
+    - LITERATURE_ANALOG
+    - ASSUMED
+    - UNAVAILABLE
+  source_tiers:
+    tier1_official_vendor:
+      # 实测 URL (curl 200, 83445 bytes)。注意结尾是 `satbus-4rw/` 而非
+      # `satbus-4rw0/` —— 后者返回 404。首版写错一个字符导致温度行 0 命中,
+      # 那是**探测器配置错误**, 不是"依据不存在"的证据。
+      - https://nanoavionics.com/cubesat-components/cubesat-reaction-wheels-control-system-satbus-4rw/
+      - https://nanoavionics.com/cubesat-components/
+    tier2_basilisk_official:
+      - basilisk_installed_source
+      - https://hanspeterschaub.info/basilisk/
+    tier3_peer_reviewed:
+      - https://ntrs.nasa.gov/api/citations/search
+  forbidden_sources:
+    - 博客
+    - CSDN
+    - 无来源网页
+    - 商业转载页
+    - 搜索摘要数字
+    - 模型记忆补参数
+  # §3: 每个热参数必须带级别标注, 缺标注即视为违规
+  require_level_on_every_parameter: true
+
+# ---------------------------------------------------------------------------
+# §4 温度语义: operating vs storage
+# ---------------------------------------------------------------------------
+temperature_semantics:
+  # 只有 operating max 允许作运行失效阈值
+  eol_admissible_kinds:
+    - operating
+  eol_inadmissible_kinds:
+    - storage
+    - survival
+    - unlabeled          # 页面既未写 operating 也未写 storage 时
+  unit_expected: degC
+  # 若来源措辞不含 operating/storage, 必须记为 unlabeled 并显式披露,
+  # 不得默认当成 operating。
+  unlabeled_must_be_disclosed: true
+  keywords_operating: ["operating", "operational", "in operation"]
+  keywords_storage: ["storage", "non-operating", "survival"]
+
+# ---------------------------------------------------------------------------
+# §5 热模型参数搜索清单 (11 项) + 三种候选模型
+# ---------------------------------------------------------------------------
+thermal_parameter_search_list:
+  - wheel_mass
+  - rotor_inertia
+  - motor_winding_resistance
+  - torque_constant_Kt
+  - winding_thermal_resistance
+  - winding_thermal_capacitance
+  - case_thermal_resistance
+  - case_thermal_capacitance
+  - allowable_motor_temperature
+  - allowable_bearing_temperature
+  - efficiency_or_loss_model
+
+candidate_models:
+  T1:
+    name: single_node_lumped_RC
+    equation: "C_th * dT/dt = P_loss - (T - T_env) / R_th"
+    requires: [P_loss_mapping, R_th_or_tau, C_th_or_tau]
+  T2:
+    name: motor_housing_2node_RC
+    requires: [P_loss_mapping, winding_thermal_resistance,
+               winding_thermal_capacitance, case_thermal_resistance,
+               case_thermal_capacitance]
+  T3:
+    name: empirical_power_to_temperature_response
+    requires: [measured_temperature_vs_power_data]
+  # §5: 不得先偏向 T1 再回去凑数字 —— 由 available provenance 决定
+  selection_rule: determined_by_available_provenance_only
+
+# ---------------------------------------------------------------------------
+# §6 provenance Gate (A/B/C/D 全部满足才 PASS)
+# ---------------------------------------------------------------------------
+provenance_gate:
+  A_direct_operating_temperature_max: required
+  B_heat_generation_mapping:
+    required: true
+    admissible_forms:
+      - electrical_loss          # I^2 * R, 需 DIRECT Kt 与 R
+      - mechanical_friction_loss # |torque * omega|
+      - efficiency_derived_loss  # P_mech * (1/eta - 1), 需 eta 有来源
+    min_level: LITERATURE_ANALOG   # 且 analog 必须同类型 RW
+  C_thermal_inertia_or_time_constant:
+    required: true
+    any_of: [C_th, tau_th, R_th_times_C_th, transient_response_time]
+  D_not_all_assumed: required
+  # 未通过时的判决 —— 直接停止, 不允许"先取个典型值试试"
+  fail_verdict: B17_THERMAL_PROVENANCE_INSUFFICIENT
+  pass_verdict: B17_THERMAL_PROVENANCE_PASS
+
+# ---------------------------------------------------------------------------
+# §7 LITERATURE_ANALOG 相似性门槛
+# ---------------------------------------------------------------------------
+analog_similarity:
+  ratios_required: [mass_ratio, torque_ratio, power_ratio]
+  ratio_min: 0.5
+  ratio_max: 2.0
+  # 任一主要尺度越界 => analog_not_transferable = true, 不得使用
+  all_must_pass: true
+  record_fields:
+    - source_wheel_mass
+    - source_power_class
+    - source_torque_class
+    - current_wheel_mass
+    - current_wheel_power
+    - current_wheel_torque
+
+# ---------------------------------------------------------------------------
+# §8 既有 T 遥测审计 (不得自动标 DIRECT)
+# ---------------------------------------------------------------------------
+existing_temperature_signal:
+  source_file: src/sim/wheel_sim.py
+  questions:
+    - is_real_thermal_state_or_synthetic
+    - depends_on_ground_truth_degradation_params
+    - contains_wear_or_friction_heating
+    - has_independent_R_C_provenance
+  # 结论只能是这两种角色之一
+  admissible_role: implementation_reference
+  inadmissible_role: provenance_proof
+  auto_direct_forbidden: true
+
+# ---------------------------------------------------------------------------
+# §9 任务功率映射
+# ---------------------------------------------------------------------------
+mission_power:
+  profile_path: data/mission_profile/basilisk_v1/profiles.h5
+  modes: [cruise, desat, imaging, nadir, safe]
+  # 推荐优先级 (有来源才可用后两种)
+  mapping_priority:
+    - mechanical_power        # abs(torque * omega), 无需额外来源
+    - efficiency_derived_loss # 需可靠 eta
+    - copper_loss             # 需 DIRECT Kt 与 R
+  stats: [mean, rms, p95, max]
+  # 检查高负载模式是否确实热负荷更高
+  high_load_modes: [imaging, desat]
+  low_load_modes: [cruise, safe]
+  fabricate_parameters_without_source: false
+
+# ---------------------------------------------------------------------------
+# §11 环境温度
+# ---------------------------------------------------------------------------
+environment:
+  # 本阶段只允许常量或项目既有环境温度, 且必须标来源。不引入 eclipse 模型。
+  T_env_mode: frozen_constant
+  T_env_provenance_must_be_labeled: true
+  eclipse_model_allowed: false
+
+# ---------------------------------------------------------------------------
+# §12 可达性解析判决 (必须先于任何时间序列仿真)
+# ---------------------------------------------------------------------------
+reachability:
+  must_run_before_timeseries: true
+  power_percentile_for_steady_state: 95
+  verdicts:
+    A: THERMAL_LIMIT_STRUCTURALLY_UNREACHABLE
+    B: THERMAL_LIMIT_BOL_VIOLATED
+    C: THERMAL_LIMIT_FEASIBLE
+  # A 的判据: 所有模式 T_ss 远低于 limit; "远低于"用裕度比表达
+  unreachable_margin_ratio: 0.5     # T_ss_max < 0.5 * (T_limit - T_env) + T_env
+
+# ---------------------------------------------------------------------------
+# §14 feasibility smoke (仅 PASS + FEASIBLE 才允许)
+# ---------------------------------------------------------------------------
+feasibility_smoke:
+  n_profiles_allowed: 2
+  report_fields: [T_start, T_mean, T_p95, T_max, tau_th, fraction_near_limit]
+  near_limit_ratio: 0.9
+  generate_eol: false
+  generate_rul: false
+  generate_lifetime_dataset: false
+
+# ---------------------------------------------------------------------------
+# §15 最终判决 (四选一)
+# ---------------------------------------------------------------------------
+verdicts:
+  - B17_THERMAL_MODEL_READY
+  - B17_THERMAL_PROVENANCE_INSUFFICIENT
+  - B17_THERMAL_LIMIT_UNREACHABLE
+  - B17_THERMAL_LIMIT_BOL_VIOLATED
+
+# ---------------------------------------------------------------------------
+# §13 / §20 停止边界
+# ---------------------------------------------------------------------------
+stop_boundary:
+  define_thermal_aging_law: false
+  define_arrhenius_damage_accumulation: false
+  define_damage_state: false
+  generate_eol_or_rul: false
+  generate_lifetime_dataset: false
+  run_target_only: false
+  run_transfer: false
+  run_s6: false
+  tune_thermal_params_to_reach_limit: false
+  use_rul_or_rmse_to_infer_thermal_model: false

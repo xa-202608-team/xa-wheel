@@ -1,0 +1,118 @@
+# configs/wheel_basilisk_b19.yaml
+# BASILISK-B1.9 —— Observable Damage-Consistent Health Index
+#
+# 本阶段只解决一件事: 构造一个**不读 hidden D**、只用可部署遥测/任务工况、
+# 且与 D-based EOL 同语义的健康指标 hi_damage_obs。
+#
+# 不改 L_ref、不改 failure definition、不改 B1.8 正式数据、不训练 RUL。
+base_config: configs/wheel_basilisk_b18.yaml
+
+paths:
+  # 输入 = B1.8 冻结的 150 条正式数据 (只读)
+  b18_final_dir: data/sim/wheel_basilisk_b18/final
+  b18_feature_h5: data/features/wheel/basilisk_b18/target_features.h5
+  b18_ckpt_dir: checkpoints/basilisk_b18
+  # B1.9 自己的输出
+  feature_h5: data/features/wheel/basilisk_b19/target_features.h5
+  ckpt_dir: checkpoints/basilisk_b19
+  doc_dir: docs/basilisk_b19
+
+protocol:
+  path: docs/basilisk_b19/protocol.md
+  hash_path: checkpoints/basilisk_b19/protocol_hash.json
+  must_freeze_before:
+    - checkpoints/basilisk_b19/observable_input_audit.json
+    - checkpoints/basilisk_b19/damage_proxy_derivation.json
+    - checkpoints/basilisk_b19/feature_stats.json
+    - checkpoints/basilisk_b19/frozen_feature_definition.json
+
+# §2 主 HI 定义 —— 冻结, 不得在看到 Gate 结果后修改
+damage_proxy:
+  name: HI_D_obs
+  hi_dataset_name: hi_damage_obs
+  equation: "HI_D_obs(t) = clip(cumsum(g_duty_obs(t) * a_T(T_obs(t))) * dt / SEC_PER_YEAR / L_ref, 0, 1)"
+  # 全部沿用 B1.8, 不新建第二套
+  L_ref_years: 3.0                  # = B1.8 NOMINAL L_ref
+  reuse_b18_g_duty_weights: true
+  reuse_b18_arrhenius: true
+  reuse_b18_reference_duty: true
+  chronological_cumulative_only: true
+  clip_lo: 0.0
+  clip_hi: 1.0
+  # 明确声明: 这是重算, 不是估计 (见 docs/basilisk_b19/limitations.md)
+  is_recomputation_not_estimation: true
+  reads_hidden_D: false
+  reads_b_true: false
+  reads_true_params: false
+  reads_true_eol: false
+
+# §3 可观测性审计: g_duty 的四个输入必须来自这些源
+observability:
+  required_provenance: [OBSERVABLE_DIRECT, OBSERVABLE_DERIVED]
+  forbidden_provenance: [HIDDEN_TRUTH]
+  hidden_truth_names: [D, b_true, eol_idx, eol, rul, Delta, tau_years, b0,
+                       omega0, Kt, Tc, D_end, event_observed, label_fail,
+                       T_base, T_amp, seed_traj]
+  # g_duty 四输入 -> 观测量映射 (逐项在 audit 脚本中核验)
+  g_duty_inputs:
+    speed_util:          {from: mission_features/omega_p95,           via: "abs(.)/omega_rated"}
+    torque_util:         {from: mission_features/torque_p95,          via: "abs(.)/torque_rated"}
+    zero_crossing_rate:  {from: mission_features/zero_crossing_count, via: "./n_per_window"}
+    maneuver_fraction:   {from: mission_features/maneuver_fraction,   via: identity}
+  temperature:
+    from: telemetry/T
+    must_be_telemetry: true
+
+# §7 x_T: 核心 10 列保持, HI_D_obs **不进 x_T**
+features:
+  reuse_build_hi: true
+  hi_formula_modified: false
+  mission_features_in_xt: false
+  damage_proxy_in_xt: false          # §7 硬约束
+  primary_hi: hi_damage_obs
+  auxiliary_hi_friction: hi_friction # §6 旧 HI_Tf 保留为辅助, 不删
+  overwrite_b18_features: false      # §6 禁止覆盖旧 feature 文件
+
+# §8 Feature Gate (14 条) —— 禁止调阈值降门槛
+feature_gate:
+  hi_finite_required: true
+  hi_min: 0.0
+  hi_max: 1.0
+  event_eol_median_hi_min: 0.90
+  event_eol_p10_hi_min: 0.75
+  censored_forced_to_one_allowed: false
+  audit_corr_min: 0.95              # 仅 IMPLEMENTATION_AUDIT
+  prefix_invariance_atol: 0.0       # 位相同, 不给容差
+  truth_leakage_max: 0
+  # x_T 中禁止出现的列名 (约束 x_T 列, 不约束标签 dataset 的存在)
+  forbidden_xt_cols: [D, damage, hi_damage_obs, hi_d_obs, eol_idx, rul,
+                      rul_lower_bound, b_true, Delta, tau_years, b0, omega0,
+                      Kt, Tc]
+  forbidden_truth_attrs: [b_true, Kt, Tc, b0, omega0, Delta, tau_years,
+                          T_base, T_amp, seed_traj, D_end]
+
+# §4 chronological-only 禁止清单 (审计脚本据此扫描)
+chronological:
+  forbidden_operations:
+    - full_trajectory_normalization
+    - future_max
+    - final_value_normalization
+    - eol_normalization
+    - trajectory_level_minmax_using_future_rows
+  prefix_truncation_test_frac: 0.5
+
+# §5 hidden D 比较: offline only, 仅 IMPLEMENTATION_AUDIT
+implementation_audit:
+  purpose: IMPLEMENTATION_AUDIT
+  compare_with_hidden_D: true
+  D_true_enters_construction: false
+  D_true_enters_xt: false
+  D_true_enters_normalization: false
+  D_true_enters_train_input: false
+  report: [rmse, correlation, max_abs_error]
+
+# §11 本阶段不训练
+training_forbidden:
+  target_only: false
+  transfer: false
+  note: "B1.9 不训练 RUL; 任何 target_only/transfer 产物出现即违规"

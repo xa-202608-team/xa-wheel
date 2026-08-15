@@ -1,0 +1,109 @@
+# configs/wheel_basilisk_b15.yaml
+#
+# Basilisk-B1.5 —— F2 Failure-Threshold Provenance Gate
+#
+# 本阶段是**纯审计阶段**: 只回答"F2 friction-torque threshold 是否具有独立、
+# 可审计的物理来源?", 不跑仿真、不生成数据集、不训练。
+#
+# 因此本文件里**没有任何可调仿真参数** —— 它只登记:
+#   (a) 审计对象 (被审计的公式与其构成量, 全部只读);
+#   (b) §6 禁止清单 (逐字记录, 记录禁令本身不构成使用);
+#   (c) §4 置信标签的合法取值域;
+#   (d) 本阶段的停止边界。
+#
+# 若将来有人想在此文件里加 q0 / b0 / Delta / tau / horizon / Im_rated /
+# threshold 之类的键 —— 那就已经越出 B1.5 的授权范围了。
+
+stage: BASILISK_B1.5
+section: "§1-§12"
+question: "F2 friction-torque threshold 是否具有独立、可审计的物理来源?"
+
+paths:
+  ckpt_dir: checkpoints/basilisk_b15
+  docs_dir: docs/basilisk_b15
+  contract: docs/basilisk_b15/baseline_contract.json
+  status: STATUS_BASILISK_B15.md
+
+# ---------------------------------------------------------------------------
+# §4 审计对象 —— 全部只读, 本阶段不得修改任何一项
+# ---------------------------------------------------------------------------
+audit_target:
+  formula:
+    eta_margin: "1 - torque_util_ref_p95"
+    T_f_fail: "eta_margin * u_max"
+  readonly_values:
+    # 来源: checkpoints/basilisk_b12/candidates.json
+    #       -> per_candidate.FRICTION_TORQUE_P95.threshold_derivation
+    torque_util_ref_p95: 0.284426851489331
+    eta_margin: 0.715573148510669
+    u_max_Nm: 0.2
+    T_f_fail_Nm: 0.14311462970213382
+    b12_own_confidence_label: DERIVED
+  # §4 要求的四类置信标签, 不得新增第五类
+  confidence_labels:
+    - DIRECT
+    - DERIVED
+    - ASSUMED
+    - UNAVAILABLE
+
+# ---------------------------------------------------------------------------
+# §3 q0 记账口径 —— 修正只作用于审计量
+# ---------------------------------------------------------------------------
+q0_accounting:
+  wrong_caliber: "q0 = b_true[0] / b_fail_f2"
+  correct_caliber: "q0 = b0 / b_fail_f2"
+  reason: "b_true[0] 已经过一次退化更新, 不是采样期初值"
+  b0_source: "h5 group attrs (sample_params 原始输出)"
+  # 与 B1.4 Gate 13 (d) 完全相同, **不得放宽**
+  tolerance_rel: 1.0e-12
+  must_not_modify_trajectories: true
+
+# ---------------------------------------------------------------------------
+# §6 禁止清单 —— 逐字记录。记录禁令本身不构成使用这些量。
+# ---------------------------------------------------------------------------
+forbidden:
+  - "用 B13/B14 failure fraction 推阈值"
+  - "用 RUL RMSE"
+  - "用 target_only/transfer"
+  - "调 Delta"
+  - "调 q0"
+  - "调 horizon"
+  - "调 Im_rated"
+  - "新造任意 safety factor"
+
+# ---------------------------------------------------------------------------
+# §7/§8/§9 verdict 域 —— 三者互斥
+# ---------------------------------------------------------------------------
+verdicts:
+  - B15_THRESHOLD_PROVENANCE_SUFFICIENT      # §7: 存在独立可量化依据
+  - B15_THRESHOLD_PROVENANCE_INSUFFICIENT    # §8: 仅定性或全无依据
+  - B15_FAILURE_SEMANTICS_MISMATCH           # §9: F2 本质是控制裕度阈值
+
+# §7 才允许的动作; 其余 verdict 下一律禁止
+probe:
+  allowed_only_if_verdict: B15_THRESHOLD_PROVENANCE_SUFFICIENT
+  n_traj: 60
+  crn: true
+  max_runs: 1
+  gates: "沿用 B1.3 的 14 条数据质量 Gate, 逐字复用"
+  must_not_modify_threshold_after_probe: true
+
+# ---------------------------------------------------------------------------
+# §10 后续路线 —— 只写计划, 本阶段不执行
+# ---------------------------------------------------------------------------
+routes:
+  execute_in_this_stage: false
+  ROUTE_A: RIGHT_CENSORED_SURVIVAL
+  ROUTE_B: DOCUMENTED_FAILURE_WHEEL
+
+# ---------------------------------------------------------------------------
+# 停止边界
+# ---------------------------------------------------------------------------
+stop_boundary:
+  no_rul: true
+  no_transfer: true
+  no_s6: true
+  no_new_failure_dataset: true
+  no_second_probe: true
+  no_threshold_modification: true
+  mutable_groups: []      # B1.5 无 mutable 组

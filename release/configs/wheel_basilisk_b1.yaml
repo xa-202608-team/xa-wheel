@@ -1,0 +1,124 @@
+# configs/wheel_basilisk_b1.yaml
+#
+# Basilisk-B1 —— 物理一致的量纲标定 + 失效分布 Gate。
+#
+# 继承链: configs/wheel.yaml (退化物理唯一定义)
+#          <- configs/wheel_basilisk.yaml (Basilisk 工况库 / spacecraft / bridge)
+#          <- 本文件 (B1 量纲标定 + candidate registry + b1 隔离路径)
+#
+# 为什么必须继承而不是复制 (同 wheel_basilisk.yaml 的理由):
+#   退化物理参数只能有一份定义。B1 唯一改动的是"尺度参数如何适配 Honeywell_HR16",
+#   物理结构 (Arrhenius / 指数摩擦增长 / I_m 响应 / 失效判据) 一字不动。
+#
+# 铁律 (B1 §5):
+#   本文件里的任何数值都**不允许**为了让 failure fraction 好看而调整。
+#   rated 值来自 Basilisk rwFactory 的 Honeywell_HR16 定义 (provenance 见下),
+#   reference duty 来自已冻结的 profiles.h5 全模式集合均值 (运行时计算, 非手填)。
+
+base_config: configs/wheel_basilisk.yaml
+
+seed: 20260809
+
+# ---------- B1 §2/§3: HR16 额定值 (量纲标定的唯一基准) ----------
+# provenance: 全部由 Basilisk 官方 simIncludeRW.rwFactory().create("Honeywell_HR16",
+#   axis, maxMomentum=<sim.spacecraft.rw.max_momentum_Nms>) 返回对象的属性直接读出,
+#   由 scripts/basilisk_b1/audit_physics.py 在运行时复核并写入 physics_audit.md。
+#   config 里记录的是**期望值**, 与运行时读数不一致即报错停止 (禁止手工凑数)。
+rated:
+  source: basilisk_rwFactory_Honeywell_HR16
+  omega_rated_rad_s: 628.3185307179587    # = obj.Omega_max
+  torque_rated_Nm: 0.2                    # = obj.u_max (电机额定力矩)
+  rotor_inertia_Js_kgm2: 0.07957747154594767   # = obj.Js
+  rotor_mass_kg: 9.0                      # = obj.mass
+  u_s_Nm: 2.8e-06                         # = obj.U_s (静不平衡, 仅记录)
+  u_d_Nm: 7.7e-07                         # = obj.U_d (动不平衡, 仅记录)
+  tol_rel: 1.0e-09                        # 运行时复核相对容差
+
+# ---------- B1 §4: 无量纲轮利用率驱动的磨损时钟 ----------
+# 退化结构完全保留 wheel.yaml 的 b(t) = b0·[1 + Δ·(1 - e^{-integ/τ})];
+# 唯一改动: integ 的被积函数由"纯 Arrhenius 加速"改为
+#   wear_drive = accel(T) · g_duty(speed_util, torque_util, zcr, maneuver_fraction)
+# 其中 g_duty 在 reference duty 处归一到 1.0。
+#
+# 物理依据:
+#   speed_util 项指数 2.0 —— 黏性摩擦功耗 P = b·ω², 磨损率随摩擦功耗增长;
+#   torque_util 项指数 1.0 —— Archard 磨损率随接触载荷线性增长;
+#   zero_crossing / maneuver 项 —— 穿零与机动意味着边界润滑 / 启停工况,
+#   已知会显著加速轴承润滑退化, 但缺乏公开定量依据, 故只给小权重。
+wear_drive:
+  reference: all_mode_ensemble_mean   # reference duty 口径 (运行时从 profiles.h5 算)
+  speed_util_weight: 0.40
+  torque_util_weight: 0.40
+  zero_crossing_weight: 0.10
+  maneuver_weight: 0.10
+  speed_util_exponent: 2.0
+  torque_util_exponent: 1.0
+  # 保护: reference 分母下限, 防某项 reference 近零导致该项发散
+  ref_floor: 1.0e-04
+  # g_duty 上限 (nominal 的有限倍, §4 要求"最恶劣工况下为 nominal 的有限倍")
+  g_duty_max: 20.0
+
+# ---------- B1 §6: 预先登记的 candidate registry (冻结, 只允许这三个) ----------
+# 三者**退化尺度完全相同**, 唯一差异 = mission horizon。这样才能区分
+# "是量纲尺度问题" 还是 "任务期太短"。禁止新增 D/E。
+candidates:
+  registry: [UTILIZATION_ONLY, UTILIZATION_PLUS_DURATION, UTILIZATION_PLUS_DURATION_LONG]
+  n_traj: 60                     # §7 每 candidate 60 条
+  priority: [UTILIZATION_ONLY, UTILIZATION_PLUS_DURATION, UTILIZATION_PLUS_DURATION_LONG]
+  spec:
+    UTILIZATION_ONLY:
+      horizon_scale: 1.0
+      # b0 量纲标定系数由 rated 值推导 (见 calibrate_degradation.b0_scale),
+      # 三个 candidate 共用同一个值, 不在此手填。
+      use_utilization_wear: true
+    UTILIZATION_PLUS_DURATION:
+      horizon_scale: 1.5
+      use_utilization_wear: true
+    UTILIZATION_PLUS_DURATION_LONG:
+      horizon_scale: 2.0
+      use_utilization_wear: true
+
+# ---------- B1 §8: candidate 物理 Gate (10 条, 全部满足才 eligible) ----------
+# 绝不含任何 RUL / 模型指标 (§5)。由 tests/basilisk_b1 的两个硬测试钉死。
+gate:
+  failure_fraction_min: 0.35
+  failure_fraction_max: 0.80
+  censored_fraction_min: 0.15
+  min_event_observed: 20
+  eol_at_horizon_end_frac_max: 0.35
+  eol_iqr_min: 1.0               # 索引单位, > 0
+  b_monotone_frac_min: 0.99
+  temperature_min_K: 200.0
+  temperature_max_K: 400.0
+  current_absmax_A: 50.0         # I_m 物理硬界 (远宽于 Im_rated, 只查数值发散)
+  wear_ordering_min_spearman: 0.0   # mode 高负荷排序 -> wear drive 单调 (>0)
+
+# ---------- B1 §13: 150 条正式数据集质量 Gate ----------
+data_gate:
+  event_observed_frac_min: 0.35
+  censored_frac_min: 0.15
+  min_event_observed_traj: 40
+  hi_p95_min: 0.80
+  b_hat_p95_rel_err_max: 0.10
+
+# ---------- §15 下一阶段 split 建议 (只写文档, B1 不执行) ----------
+next_split:
+  train_frac: 0.30
+  val_frac: 0.20
+  test_frac: 0.50
+  stratify: [event_observed, censored]
+  level: trajectory
+
+# ---------- B1 隔离路径 (绝不覆盖 basilisk_v1) ----------
+paths:
+  # profile 库复用 basilisk_v1 已冻结产物 (只读, 不重新生成)
+  profile_h5: data/mission_profile/basilisk_v1/profiles.h5
+  sim_dir: data/sim/wheel_basilisk_b1
+  candidate_dir: data/sim/wheel_basilisk_b1/candidates
+  feature_h5: data/features/wheel/basilisk_b1/target_features.h5
+  ckpt_dir: checkpoints/basilisk_b1
+  doc_dir: docs/basilisk_b1
+
+transfer:
+  # 仅为路径一致性记录; B1 §14 明确不训练任何 RUL 模型
+  target_feature_path: data/features/wheel/basilisk_b1/target_features.h5
